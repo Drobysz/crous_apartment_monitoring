@@ -1,0 +1,16 @@
+{
+  "results": {
+    "total": {"value": 1, "relation": "eq"},
+    "page": 0,
+    "pageSize": 20,
+    "items": [{
+      "id": 123, "label": "CU LA BATELIERE", "available": true,
+      "area": {"min": 23, "max": 28},
+      "residence": {"label": "Résidence Batelière", "address": "7 à 15 route de Metz 54320 Maxéville", "location": {"lat": 48.71, "lon": 6.18}, "medias": [{"src": "r/primary.jpg"}]},
+      "occupationModes": [{"type": "alone", "rent": {"min": 55210, "max": 55210}}, {"type": "couple", "rent": {"min": 55210, "max": 55210}}],
+      "beds": [{"count": 2, "type": "lits rapprochables"}],
+      "equipments": [{"label": "WC"}, {"label": "Douche"}, {"label": "Evier + plaque"}, {"label": "Frigo"}],
+      "medias": [{"src": "123/main.jpg"}]
+    }]
+  }
+}
