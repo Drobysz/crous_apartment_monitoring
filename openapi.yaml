@@ -1,0 +1,179 @@
+openapi: 3.1.0
+info:
+  title: CROUS Logement Bot API
+  version: 0.1.0
+  description: |
+    Operational API for the multilingual CROUS accommodation monitoring bot.
+    Telegram sends updates to the webhook endpoint; it is not a public client API.
+servers:
+  - url: https://{host}
+    variables:
+      host:
+        default: bot.example.org
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      summary: Check application and CROUS availability
+      responses:
+        '200':
+          description: The service and CROUS are available.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: The CROUS service is unavailable or cannot be reached.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+  /telegram/webhook:
+    post:
+      operationId: telegramWebhook
+      summary: Receive a Telegram Bot API update
+      description: |
+        Used only in `RUN_MODE=webhook`. Telegram must send the configured
+        `WEBHOOK_SECRET` in `X-Telegram-Bot-Api-Secret-Token`.
+      parameters:
+        - $ref: '#/components/parameters/TelegramWebhookSecret'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TelegramUpdate'
+      responses:
+        '200':
+          description: The update was accepted for processing.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcceptedResponse'
+        '403':
+          description: The webhook secret is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Webhook mode is not configured.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+components:
+  parameters:
+    TelegramWebhookSecret:
+      name: X-Telegram-Bot-Api-Secret-Token
+      in: header
+      required: true
+      description: Value configured through `WEBHOOK_SECRET`.
+      schema:
+        type: string
+        minLength: 1
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          const: ok
+          example: ok
+    AcceptedResponse:
+      type: object
+      required: [ok]
+      properties:
+        ok:
+          type: boolean
+          const: true
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+          example: CROUS unavailable
+    TelegramUpdate:
+      type: object
+      description: |
+        Telegram Bot API Update. The application validates the complete payload
+        with aiogram at runtime; fields vary by update type.
+      required: [update_id]
+      properties:
+        update_id:
+          type: integer
+          format: int64
+          example: 100000001
+        message:
+          $ref: '#/components/schemas/TelegramMessage'
+        callback_query:
+          $ref: '#/components/schemas/TelegramCallbackQuery'
+      additionalProperties: true
+    TelegramUser:
+      type: object
+      required: [id, is_bot, first_name]
+      properties:
+        id:
+          type: integer
+          format: int64
+        is_bot:
+          type: boolean
+        first_name:
+          type: string
+        language_code:
+          type: string
+          example: fr
+    TelegramChat:
+      type: object
+      required: [id, type]
+      properties:
+        id:
+          type: integer
+          format: int64
+        type:
+          type: string
+          example: private
+    TelegramLocation:
+      type: object
+      required: [latitude, longitude]
+      properties:
+        latitude:
+          type: number
+          format: double
+        longitude:
+          type: number
+          format: double
+    TelegramMessage:
+      type: object
+      required: [message_id, date, chat]
+      properties:
+        message_id:
+          type: integer
+        date:
+          type: integer
+          description: Unix time.
+        chat:
+          $ref: '#/components/schemas/TelegramChat'
+        from:
+          $ref: '#/components/schemas/TelegramUser'
+        text:
+          type: string
+        location:
+          $ref: '#/components/schemas/TelegramLocation'
+      additionalProperties: true
+    TelegramCallbackQuery:
+      type: object
+      required: [id, from]
+      properties:
+        id:
+          type: string
+        from:
+          $ref: '#/components/schemas/TelegramUser'
+        data:
+          type: string
+          description: Compact aiogram callback payload.
+        message:
+          $ref: '#/components/schemas/TelegramMessage'
+      additionalProperties: true
