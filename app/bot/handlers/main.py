@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import httpx
 import structlog
 from aiogram import Bot, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.types import (
@@ -23,10 +25,12 @@ from app.bot.services import get_or_create_user, latest_search, main_screen
 from app.bot.states import LocationFlow
 from app.core.i18n import i18n
 from app.crous.client import CrousClient
+from app.crous.exceptions import CrousUnavailable
 from app.crous.models import Bounds
 from app.db.models import Search, User
 from app.geocoding.base import GeocodingProvider
 from app.geocoding.models import GeocodedPlace
+from app.notifications.service import apply_snapshot
 from app.searches.service import (
     InvalidBounds,
     bounds_from_serialized,
@@ -41,6 +45,7 @@ logger = structlog.get_logger(__name__)
 def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: GeocodingProvider, crous: CrousClient) -> Router:
     router = Router(name="main")
     nav = NavigationMessageManager()
+    listing_locks: dict[int, asyncio.Lock] = {}
 
     async def user_for(message: Message | CallbackQuery, session: AsyncSession) -> User:
         source = message.from_user
@@ -113,6 +118,14 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         await callback.answer()
         async with session_factory() as session:
             user = await user_for(callback, session)
+            logger.info(
+                "navigation_callback_entered",
+                callback_query_id=callback.id,
+                telegram_user_id=user.telegram_user_id,
+                chat_id=user.telegram_chat_id,
+                action=callback_data.action,
+                navigation_version=callback_data.version,
+            )
             if not await current(callback, callback_data, user):
                 await session.commit(); return
             action = callback_data.action
@@ -246,7 +259,7 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         if not message.location: return
         async with session_factory() as session:
             user = await user_for(message, session)
-            await message.answer(
+            loading_message = await message.answer(
                 i18n.text(user.language, "location-searching"),
                 reply_markup=ReplyKeyboardRemove(),
             )
@@ -257,6 +270,10 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                     user.language,
                 )
             except (httpx.HTTPError, InvalidBounds):
+                try:
+                    await loading_message.delete()
+                except TelegramBadRequest:
+                    pass
                 version = user.active_navigation_version + 1
                 await nav.render_text_screen(
                     message.bot,
@@ -269,6 +286,10 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                 await session.commit()
                 return
             if not places:
+                try:
+                    await loading_message.delete()
+                except TelegramBadRequest:
+                    pass
                 version = user.active_navigation_version + 1
                 await nav.render_text_screen(
                     message.bot,
@@ -280,6 +301,10 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                 )
                 await session.commit()
                 return
+            try:
+                await loading_message.delete()
+            except TelegramBadRequest:
+                pass
             await present_places(message.bot, session, user, state, places)
             await session.commit()
 
@@ -335,6 +360,56 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         search = await latest_search(session, user)
         if not search:
             await callback.answer(i18n.text(user.language, "no-search"), show_alert=True); return
+        lock = listing_locks.setdefault(user.id, asyncio.Lock())
+        if lock.locked():
+            await callback.answer(i18n.text(user.language, "list-loading"), show_alert=False)
+            logger.info(
+                "listing_request_deduplicated",
+                callback_query_id=callback.id,
+                telegram_user_id=user.telegram_user_id,
+                search_id=search.id,
+            )
+            return
+        correlation_id = callback.id
+        async with lock:
+            loading_message = await callback.message.answer(i18n.text(user.language, "list-loading"))
+            logger.info(
+                "listing_request_started",
+                correlation_id=correlation_id,
+                telegram_user_id=user.telegram_user_id,
+                chat_id=user.telegram_chat_id,
+                search_id=search.id,
+            )
+            try:
+                await _send_current_listings(
+                    callback,
+                    session,
+                    user,
+                    search,
+                    correlation_id,
+                )
+            except (CrousUnavailable, httpx.HTTPError) as error:
+                logger.warning(
+                    "listing_request_failed",
+                    correlation_id=correlation_id,
+                    telegram_user_id=user.telegram_user_id,
+                    search_id=search.id,
+                    reason=str(error),
+                )
+                await callback.message.answer(i18n.text(user.language, "error"))
+            finally:
+                try:
+                    await loading_message.delete()
+                except TelegramBadRequest:
+                    pass
+
+    async def _send_current_listings(
+        callback: CallbackQuery,
+        session: AsyncSession,
+        user: User,
+        search: Search,
+        correlation_id: str,
+    ) -> None:
         try:
             bounds = validate_bounds(
                 Bounds(search.bounds_west, search.bounds_north, search.bounds_east, search.bounds_south)
@@ -351,10 +426,57 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             )
             await callback.answer(i18n.text(user.language, "invalid-location-area"), show_alert=True)
             return
-        listings = await crous.search(bounds)
+        listings = await crous.search(bounds, correlation_id=correlation_id)
+        # Persist the exact snapshot before delivery so worker, database, and
+        # the first button press all observe the same search-scoped set.
+        await apply_snapshot(session, search, listings)
+        await session.commit()
+        logger.info(
+            "listing_snapshot_committed",
+            correlation_id=correlation_id,
+            telegram_user_id=user.telegram_user_id,
+            search_id=search.id,
+            listing_count=len(listings),
+        )
+        if not listings:
+            await callback.message.answer(i18n.text(user.language, "no-listings"))
+            await main_screen(callback.bot, session, user, nav)
+            return
         from app.bot.cards import send_accommodation_card
         for listing in listings[:5]:
-            await send_accommodation_card(callback.bot, user.telegram_chat_id, listing, user.language, datetime.now(UTC))
+            try:
+                sent_message_id = await send_accommodation_card(
+                    callback.bot,
+                    user.telegram_chat_id,
+                    listing,
+                    user.language,
+                    datetime.now(UTC),
+                )
+            except Exception as error:
+                logger.exception(
+                    "listing_card_send_failed",
+                    correlation_id=correlation_id,
+                    telegram_user_id=user.telegram_user_id,
+                    search_id=search.id,
+                    external_listing_id=listing.external_id,
+                    reason=str(error),
+                )
+                continue
+            logger.info(
+                "listing_card_sent",
+                correlation_id=correlation_id,
+                telegram_user_id=user.telegram_user_id,
+                search_id=search.id,
+                external_listing_id=listing.external_id,
+                telegram_message_id=sent_message_id,
+            )
         await main_screen(callback.bot, session, user, nav)
+        logger.info(
+            "listing_request_completed",
+            correlation_id=correlation_id,
+            telegram_user_id=user.telegram_user_id,
+            search_id=search.id,
+            rendered_count=min(len(listings), 5),
+        )
 
     return router

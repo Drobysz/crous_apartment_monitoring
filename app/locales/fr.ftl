@@ -50,4 +50,5 @@ available-again = 🔔 Disponible à nouveau
 baseline = Surveillance activée : {count} logement(s) enregistrés comme référence.
 location-required = Choisissez une zone avant d’activer la surveillance.
 error = Une erreur temporaire est survenue. Réessayez plus tard.
+list-loading = Recherche des logements disponibles…
 invalid-location-area = La zone sélectionnée est invalide. Choisissez-la à nouveau.

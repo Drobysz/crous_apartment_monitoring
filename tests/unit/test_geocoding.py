@@ -37,3 +37,38 @@ async def test_photon_reads_city_extent_from_properties_not_a_point_fallback() -
         6.2126188,
         48.666906,
     )
+
+
+@pytest.mark.asyncio
+async def test_reverse_geocoding_uses_a_french_city_boundary() -> None:
+    provider = PhotonProvider()
+    try:
+        places = provider._convert_nominatim(
+            {
+                "features": [
+                    {
+                        "geometry": {"coordinates": [6.0243622, 47.2380222]},
+                        "bbox": [5.9409668, 47.2006872, 6.0835059, 47.3200746],
+                        "properties": {
+                            "address": {
+                                "city": "Besançon",
+                                "postcode": "25000",
+                                "country_code": "fr",
+                            }
+                        },
+                    }
+                ]
+            }
+        )
+    finally:
+        await provider.client.aclose()
+
+    assert [(place.display_name, place.provider) for place in places] == [
+        ("Besançon (25000)", "nominatim")
+    ]
+    assert (places[0].west, places[0].north, places[0].east, places[0].south) == (
+        5.9409668,
+        47.3200746,
+        6.0835059,
+        47.2006872,
+    )
