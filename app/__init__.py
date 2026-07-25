@@ -1,0 +1,1 @@
+"""CROUS accommodation monitoring service."""
