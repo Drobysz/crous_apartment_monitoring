@@ -5,6 +5,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -31,12 +32,12 @@ class Timestamped:
 class User(Timestamped, Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
-    telegram_user_id: Mapped[int] = mapped_column(unique=True, index=True)
-    telegram_chat_id: Mapped[int]
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger)
     language: Mapped[str] = mapped_column(String(2), default="fr")
     telegram_language_code: Mapped[str | None] = mapped_column(String(16))
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
-    active_navigation_chat_id: Mapped[int | None]
+    active_navigation_chat_id: Mapped[int | None] = mapped_column(BigInteger)
     active_navigation_message_id: Mapped[int | None]
     active_navigation_screen: Mapped[str | None] = mapped_column(String(64))
     active_navigation_version: Mapped[int] = mapped_column(Integer, default=0)

@@ -9,8 +9,8 @@ class GeocodedPlace:
     country_code: str | None
     latitude: float
     longitude: float
-    west: float
-    north: float
-    east: float
-    south: float
+    west: float | None
+    north: float | None
+    east: float | None
+    south: float | None
     provider: str = "photon"

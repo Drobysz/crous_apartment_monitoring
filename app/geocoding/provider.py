@@ -45,10 +45,30 @@ class PhotonProvider(GeocodingProvider):
         for feature in payload.get("features", []):
             props = feature.get("properties", {})
             lon, lat = feature.get("geometry", {}).get("coordinates", [None, None])
-            extent = feature.get("bbox") or [lon, lat, lon, lat]
-            if None in (lon, lat) or len(extent) != 4: continue
+            # Photon puts the bounding box in properties.extent, ordered as
+            # west, north, east, south.  GeoJSON's optional bbox is absent on
+            # this endpoint, so using the point as a fallback creates a zero
+            # area and must never be offered as an "entire city" search.
+            extent = props.get("extent")
+            if None in (lon, lat):
+                continue
+            if not isinstance(extent, list) or len(extent) != 4:
+                extent = [None, None, None, None]
             city = props.get("city") or props.get("name")
             postcode = props.get("postcode")
             display = f"{city} ({postcode})" if city and postcode else str(city or props.get("name") or "Lieu")
-            places.append(GeocodedPlace(display, city, postcode, props.get("countrycode"), lat, lon, extent[0], extent[3], extent[2], extent[1]))
+            places.append(
+                GeocodedPlace(
+                    display,
+                    city,
+                    postcode,
+                    props.get("countrycode"),
+                    lat,
+                    lon,
+                    extent[0],
+                    extent[1],
+                    extent[2],
+                    extent[3],
+                )
+            )
         return places

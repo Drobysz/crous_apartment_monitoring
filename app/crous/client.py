@@ -4,12 +4,16 @@ import asyncio
 from typing import Any
 
 import httpx
+import structlog
 
 from app.core.config import Settings, get_settings
 from app.crous.discovery import Tool, discover_current_tool
 from app.crous.exceptions import CrousUnavailable
 from app.crous.models import Bounds, CrousListing
 from app.crous.parser import parse_detail_page, parse_search_response
+from app.searches.service import bounds_log_fields, listing_is_within_bounds, validate_bounds
+
+logger = structlog.get_logger(__name__)
 
 
 class CrousClient:
@@ -30,17 +34,37 @@ class CrousClient:
         return self._tool
 
     async def search(self, bounds: Bounds, filters: dict[str, Any] | None = None, page: int = 0) -> list[CrousListing]:
+        # Validate before discovery/request construction: an invalid area must
+        # never be silently converted into an unrestricted national query.
+        bounds = validate_bounds(bounds)
         tool = await self.tool()
         body = {"bounds": bounds.as_crous(), "page": page, **(filters or {})}
+        endpoint = f"{self.base_url}/api/{self.settings.crous_locale}/search/{tool.id}"
+        logger.info(
+            "crous_search_request",
+            endpoint=endpoint,
+            page=page,
+            **bounds_log_fields(bounds),
+        )
         for attempt in range(3):
-            response = await self.client.post(f"{self.base_url}/api/{self.settings.crous_locale}/search/{tool.id}", json=body)
+            response = await self.client.post(endpoint, json=body)
             if response.status_code in {429, 500, 502, 503, 504}:
                 if attempt == 2:
                     raise CrousUnavailable(f"CROUS returned {response.status_code}")
                 await asyncio.sleep(2**attempt)
                 continue
             response.raise_for_status()
-            return parse_search_response(response.json(), self.base_url, tool.id)
+            parsed = parse_search_response(response.json(), self.base_url, tool.id)
+            accepted = [item for item in parsed if listing_is_within_bounds(item, bounds)]
+            logger.info(
+                "crous_search_response",
+                endpoint=endpoint,
+                received_count=len(parsed),
+                accepted_count=len(accepted),
+                rejected_outside_bounds_count=len(parsed) - len(accepted),
+                **bounds_log_fields(bounds),
+            )
+            return accepted
         raise AssertionError("unreachable")
 
     async def get_listing_details(self, url_or_id: str) -> dict[str, str | None]:

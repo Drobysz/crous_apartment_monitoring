@@ -1,6 +1,8 @@
 import asyncio
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
 
 from app.bot.handlers.main import build_router
@@ -15,7 +17,10 @@ async def main() -> None:
     settings = get_settings()
     if not settings.telegram_bot_token: raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
     configure_logging(settings.log_level)
-    bot = Bot(settings.telegram_bot_token.get_secret_value())
+    bot = Bot(
+        settings.telegram_bot_token.get_secret_value(),
+        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+    )
     dispatcher = Dispatcher(storage=RedisStorage.from_url(settings.redis_url))
     dispatcher.include_router(build_router(SessionLocal, PhotonProvider(), CrousClient(settings)))
     await bot.delete_webhook(drop_pending_updates=False)

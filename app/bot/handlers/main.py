@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import structlog
 from aiogram import Bot, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -26,7 +27,15 @@ from app.crous.models import Bounds
 from app.db.models import Search, User
 from app.geocoding.base import GeocodingProvider
 from app.geocoding.models import GeocodedPlace
-from app.searches.service import radius_bounds, validate_bounds
+from app.searches.service import (
+    InvalidBounds,
+    bounds_from_serialized,
+    bounds_log_fields,
+    radius_bounds,
+    validate_bounds,
+)
+
+logger = structlog.get_logger(__name__)
 
 
 def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: GeocodingProvider, crous: CrousClient) -> Router:
@@ -136,7 +145,20 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                     await state.update_data(place=places[callback_data.entity])
                     await state.set_state(LocationFlow.radius_selection)
                     version = user.active_navigation_version + 1
-                    await nav.render_text_screen(callback.bot, session, user, i18n.text(user.language, "choose-radius"), radius_menu(user.language, version), "radius")
+                    try:
+                        bounds_from_serialized(places[callback_data.entity])
+                    except InvalidBounds:
+                        include_entire_city = False
+                    else:
+                        include_entire_city = True
+                    await nav.render_text_screen(
+                        callback.bot,
+                        session,
+                        user,
+                        i18n.text(user.language, "choose-radius"),
+                        radius_menu(user.language, version, include_entire_city=include_entire_city),
+                        "radius",
+                    )
             elif action == "geo":
                 await state.set_state(LocationFlow.geolocation)
                 keyboard = ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=i18n.text(user.language, "send-location"), request_location=True)]], resize_keyboard=True, one_time_keyboard=True)
@@ -146,19 +168,36 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                 if not place:
                     await render_location(callback.bot, session, user)
                 else:
-                    search = await save_search(session, user, place, callback_data.entity)
-                    await state.clear()
-                    await main_screen(
-                        callback.bot,
-                        session,
-                        user,
-                        nav,
-                        notice=i18n.text(
-                            user.language,
-                            "location-saved",
-                            value=search.location_display_name,
-                        ),
-                    )
+                    try:
+                        search = await save_search(session, user, place, callback_data.entity)
+                    except InvalidBounds as error:
+                        logger.warning(
+                            "invalid_bounds_rejected",
+                            telegram_user_id=user.telegram_user_id,
+                            source="radius_selection",
+                            radius_km=callback_data.entity,
+                            reason=str(error),
+                            raw_bounds={
+                                key: place.get(key)
+                                for key in ("west", "south", "east", "north")
+                            },
+                        )
+                        await state.clear()
+                        await render_location(callback.bot, session, user)
+                        await callback.message.answer(i18n.text(user.language, "invalid-location-area"))
+                    else:
+                        await state.clear()
+                        await main_screen(
+                            callback.bot,
+                            session,
+                            user,
+                            nav,
+                            notice=i18n.text(
+                                user.language,
+                                "location-saved",
+                                value=search.location_display_name,
+                            ),
+                        )
             elif action == "list":
                 await send_current_listings(callback, session, user)
             elif action == "delete-yes":
@@ -175,7 +214,7 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             user = await user_for(message, session)
             try:
                 places = await geocoder.search(message.text, user.language)
-            except httpx.HTTPError:
+            except (httpx.HTTPError, InvalidBounds):
                 version = user.active_navigation_version + 1
                 await nav.render_text_screen(
                     message.bot,
@@ -217,7 +256,7 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                     message.location.longitude,
                     user.language,
                 )
-            except httpx.HTTPError:
+            except (httpx.HTTPError, InvalidBounds):
                 version = user.active_navigation_version + 1
                 await nav.render_text_screen(
                     message.bot,
@@ -264,7 +303,7 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         if radius:
             bounds = radius_bounds(float(raw["latitude"]), float(raw["longitude"]), radius)
         else:
-            bounds = validate_bounds(Bounds(float(raw["west"]), float(raw["north"]), float(raw["east"]), float(raw["south"])))
+            bounds = bounds_from_serialized(raw)
         search = await latest_search(session, user)
         values = {
             "location_display_name": str(raw["display_name"]),
@@ -296,7 +335,23 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         search = await latest_search(session, user)
         if not search:
             await callback.answer(i18n.text(user.language, "no-search"), show_alert=True); return
-        listings = await crous.search(Bounds(search.bounds_west, search.bounds_north, search.bounds_east, search.bounds_south))
+        try:
+            bounds = validate_bounds(
+                Bounds(search.bounds_west, search.bounds_north, search.bounds_east, search.bounds_south)
+            )
+        except InvalidBounds as error:
+            logger.warning(
+                "invalid_persisted_search_bounds",
+                telegram_user_id=user.telegram_user_id,
+                search_id=search.id,
+                reason=str(error),
+                **bounds_log_fields(
+                    Bounds(search.bounds_west, search.bounds_north, search.bounds_east, search.bounds_south)
+                ),
+            )
+            await callback.answer(i18n.text(user.language, "invalid-location-area"), show_alert=True)
+            return
+        listings = await crous.search(bounds)
         from app.bot.cards import send_accommodation_card
         for listing in listings[:5]:
             await send_accommodation_card(callback.bot, user.telegram_chat_id, listing, user.language, datetime.now(UTC))

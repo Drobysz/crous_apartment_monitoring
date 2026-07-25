@@ -3,6 +3,8 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.fsm.storage.redis import RedisStorage
 from fastapi import FastAPI, Header, HTTPException
 
@@ -23,7 +25,10 @@ async def lifespan(_: FastAPI):
     global bot, dispatcher
     configure_logging(settings.log_level)
     if settings.telegram_bot_token:
-        bot = Bot(settings.telegram_bot_token.get_secret_value())
+        bot = Bot(
+            settings.telegram_bot_token.get_secret_value(),
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
         dispatcher = Dispatcher(storage=RedisStorage.from_url(settings.redis_url))
         dispatcher.include_router(build_router(SessionLocal, PhotonProvider(), CrousClient(settings)))
         if settings.run_mode == "webhook" and settings.webhook_base_url and settings.webhook_secret:

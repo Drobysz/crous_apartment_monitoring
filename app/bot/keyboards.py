@@ -34,8 +34,15 @@ def interval_menu(language: str, version: int, translator: Translator = i18n) ->
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def radius_menu(language: str, version: int, translator: Translator = i18n) -> InlineKeyboardMarkup:
+def radius_menu(
+    language: str,
+    version: int,
+    *,
+    include_entire_city: bool,
+    translator: Translator = i18n,
+) -> InlineKeyboardMarkup:
     rows = [[InlineKeyboardButton(text=f"{radius} km", callback_data=NavCallback(action="radius", entity=radius, version=version).pack())] for radius in (3, 5, 10, 20)]
-    rows.append([InlineKeyboardButton(text=translator.text(language, "entire-city"), callback_data=NavCallback(action="radius", entity=0, version=version).pack())])
+    if include_entire_city:
+        rows.append([InlineKeyboardButton(text=translator.text(language, "entire-city"), callback_data=NavCallback(action="radius", entity=0, version=version).pack())])
     rows.append([InlineKeyboardButton(text=translator.text(language, "back"), callback_data=NavCallback(action="location", version=version).pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
