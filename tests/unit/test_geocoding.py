@@ -21,6 +21,7 @@ async def test_photon_reads_city_extent_from_properties_not_a_point_fallback() -
                         "properties": {
                             "name": "Nancy",
                             "postcode": "54000",
+                            "country": "France",
                             "extent": [6.134292, 48.7092349, 6.2126188, 48.666906],
                         },
                     }

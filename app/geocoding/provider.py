@@ -54,6 +54,13 @@ class PhotonProvider(GeocodingProvider):
                 continue
             if not isinstance(extent, list) or len(extent) != 4:
                 extent = [None, None, None, None]
+            country_code = str(props.get("countrycode") or "").lower()
+            if not country_code and str(props.get("country") or "").casefold() == "france":
+                country_code = "fr"
+            # A geographic name is ambiguous internationally.  Searches are
+            # intentionally limited to France, where CROUS operates.
+            if country_code != "fr":
+                continue
             city = props.get("city") or props.get("name")
             postcode = props.get("postcode")
             display = f"{city} ({postcode})" if city and postcode else str(city or props.get("name") or "Lieu")
@@ -62,7 +69,7 @@ class PhotonProvider(GeocodingProvider):
                     display,
                     city,
                     postcode,
-                    props.get("countrycode"),
+                    country_code,
                     lat,
                     lon,
                     extent[0],
