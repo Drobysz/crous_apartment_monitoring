@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import httpx
 from aiogram import Bot, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -48,10 +49,11 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         await nav.render_text_screen(bot, session, user, i18n.text(user.language, "choose-location"), location_menu(user.language, version), "location")
 
     @router.message(Command("start", "menu"))
-    async def start(message: Message) -> None:
+    async def start(message: Message, state: FSMContext) -> None:
         async with session_factory() as session:
             user = await user_for(message, session)
-            await main_screen(message.bot, session, user, nav)
+            await state.clear()
+            await main_screen(message.bot, session, user, nav, force_new=True)
             await session.commit()
 
     @router.message(Command("language"))
@@ -144,8 +146,19 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                 if not place:
                     await render_location(callback.bot, session, user)
                 else:
-                    await save_search(session, user, place, callback_data.entity)
-                    await state.clear(); await main_screen(callback.bot, session, user, nav)
+                    search = await save_search(session, user, place, callback_data.entity)
+                    await state.clear()
+                    await main_screen(
+                        callback.bot,
+                        session,
+                        user,
+                        nav,
+                        notice=i18n.text(
+                            user.language,
+                            "location-saved",
+                            value=search.location_display_name,
+                        ),
+                    )
             elif action == "list":
                 await send_current_listings(callback, session, user)
             elif action == "delete-yes":
@@ -160,7 +173,32 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         if not message.text or len(message.text) > 200: return
         async with session_factory() as session:
             user = await user_for(message, session)
-            places = await geocoder.search(message.text, user.language)
+            try:
+                places = await geocoder.search(message.text, user.language)
+            except httpx.HTTPError:
+                version = user.active_navigation_version + 1
+                await nav.render_text_screen(
+                    message.bot,
+                    session,
+                    user,
+                    i18n.text(user.language, "error"),
+                    back(user.language, version, "location"),
+                    "city-input-error",
+                )
+                await session.commit()
+                return
+            if not places:
+                version = user.active_navigation_version + 1
+                await nav.render_text_screen(
+                    message.bot,
+                    session,
+                    user,
+                    i18n.text(user.language, "location-not-found"),
+                    back(user.language, version, "location"),
+                    "city-input-empty",
+                )
+                await session.commit()
+                return
             await present_places(message.bot, session, user, state, places)
             await session.commit()
 
@@ -169,8 +207,40 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         if not message.location: return
         async with session_factory() as session:
             user = await user_for(message, session)
-            await message.answer(i18n.text(user.language, "saved"), reply_markup=ReplyKeyboardRemove())
-            places = await geocoder.reverse(message.location.latitude, message.location.longitude, user.language)
+            await message.answer(
+                i18n.text(user.language, "location-searching"),
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            try:
+                places = await geocoder.reverse(
+                    message.location.latitude,
+                    message.location.longitude,
+                    user.language,
+                )
+            except httpx.HTTPError:
+                version = user.active_navigation_version + 1
+                await nav.render_text_screen(
+                    message.bot,
+                    session,
+                    user,
+                    i18n.text(user.language, "error"),
+                    back(user.language, version, "location"),
+                    "geolocation-error",
+                )
+                await session.commit()
+                return
+            if not places:
+                version = user.active_navigation_version + 1
+                await nav.render_text_screen(
+                    message.bot,
+                    session,
+                    user,
+                    i18n.text(user.language, "location-not-found"),
+                    back(user.language, version, "location"),
+                    "geolocation-empty",
+                )
+                await session.commit()
+                return
             await present_places(message.bot, session, user, state, places)
             await session.commit()
 
@@ -180,7 +250,14 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         version = user.active_navigation_version + 1
         rows = [[InlineKeyboardButton(text=place.display_name, callback_data=NavCallback(action="place", entity=index, version=version).pack())] for index, place in enumerate(places[:5])]
         rows.append([InlineKeyboardButton(text=i18n.text(user.language, "back"), callback_data=NavCallback(action="location", version=version).pack())])
-        await nav.render_text_screen(bot, session, user, i18n.text(user.language, "choose-location"), InlineKeyboardMarkup(inline_keyboard=rows), "place-selection")
+        await nav.render_text_screen(
+            bot,
+            session,
+            user,
+            i18n.text(user.language, "location-search-results"),
+            InlineKeyboardMarkup(inline_keyboard=rows),
+            "place-selection",
+        )
         await state.set_state(LocationFlow.place_selection)
 
     async def save_search(session: AsyncSession, user: User, raw: dict[str, object], radius: int) -> Search:
@@ -188,8 +265,32 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             bounds = radius_bounds(float(raw["latitude"]), float(raw["longitude"]), radius)
         else:
             bounds = validate_bounds(Bounds(float(raw["west"]), float(raw["north"]), float(raw["east"]), float(raw["south"])))
-        search = Search(user_id=user.id, location_display_name=str(raw["display_name"]), city=raw.get("city"), postal_code=raw.get("postal_code"), country_code=raw.get("country_code"), center_latitude=float(raw["latitude"]), center_longitude=float(raw["longitude"]), radius_km=radius or None, bounds_west=bounds.west, bounds_north=bounds.north, bounds_east=bounds.east, bounds_south=bounds.south, next_check_at=datetime.now(UTC))
-        session.add(search); await session.flush(); return search
+        search = await latest_search(session, user)
+        values = {
+            "location_display_name": str(raw["display_name"]),
+            "city": raw.get("city"),
+            "postal_code": raw.get("postal_code"),
+            "country_code": raw.get("country_code"),
+            "center_latitude": float(raw["latitude"]),
+            "center_longitude": float(raw["longitude"]),
+            "radius_km": radius or None,
+            "bounds_west": bounds.west,
+            "bounds_north": bounds.north,
+            "bounds_east": bounds.east,
+            "bounds_south": bounds.south,
+            "next_check_at": datetime.now(UTC),
+            "is_active": True,
+            "is_initialized": False,
+            "consecutive_errors": 0,
+        }
+        if search is None:
+            search = Search(user_id=user.id, **values)
+            session.add(search)
+        else:
+            for field, value in values.items():
+                setattr(search, field, value)
+        await session.flush()
+        return search
 
     async def send_current_listings(callback: CallbackQuery, session: AsyncSession, user: User) -> None:
         search = await latest_search(session, user)

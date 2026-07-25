@@ -8,6 +8,11 @@ from app.geocoding.base import GeocodingProvider
 from app.geocoding.models import GeocodedPlace
 
 
+def photon_locale(locale: str) -> str:
+    """Photon currently supports French and English only; UI language is independent."""
+    return locale if locale in {"fr", "en"} else "fr"
+
+
 class PhotonProvider(GeocodingProvider):
     """CROUS-hosted Photon endpoint with a small, cacheable response surface."""
     def __init__(self, base_url: str = "https://trouverunlogement.lescrous.fr/photon/api") -> None:
@@ -15,12 +20,23 @@ class PhotonProvider(GeocodingProvider):
         self.client = httpx.AsyncClient(timeout=httpx.Timeout(12, connect=5))
 
     async def search(self, query: str, locale: str) -> list[GeocodedPlace]:
-        response = await self.client.get(self.base_url, params={"q": query[:200], "lang": locale, "limit": 5})
+        response = await self.client.get(
+            self.base_url,
+            params={"q": query[:200], "lang": photon_locale(locale), "limit": 5},
+        )
         response.raise_for_status()
         return self._convert(response.json())
 
     async def reverse(self, latitude: float, longitude: float, locale: str) -> list[GeocodedPlace]:
-        response = await self.client.get(self.base_url, params={"lat": latitude, "lon": longitude, "lang": locale, "limit": 5})
+        response = await self.client.get(
+            self.base_url,
+            params={
+                "lat": latitude,
+                "lon": longitude,
+                "lang": photon_locale(locale),
+                "limit": 5,
+            },
+        )
         response.raise_for_status()
         return self._convert(response.json())
 

@@ -10,9 +10,26 @@ from app.db.models import User
 
 class NavigationMessageManager:
     """Maintains one mutable navigation message without touching accommodation cards."""
-    async def render_text_screen(self, bot: Bot, session: AsyncSession, user: User, text: str, keyboard: InlineKeyboardMarkup, screen: str) -> None:
+    async def render_text_screen(
+        self,
+        bot: Bot,
+        session: AsyncSession,
+        user: User,
+        text: str,
+        keyboard: InlineKeyboardMarkup,
+        screen: str,
+        *,
+        force_new: bool = False,
+    ) -> None:
         version = user.active_navigation_version + 1
-        if user.active_navigation_message_id and user.active_navigation_chat_id:
+        if force_new:
+            await self.disable_old_keyboard(bot, user)
+            message = await bot.send_message(user.telegram_chat_id, text, reply_markup=keyboard)
+            user.active_navigation_chat_id, user.active_navigation_message_id = (
+                message.chat.id,
+                message.message_id,
+            )
+        elif user.active_navigation_message_id and user.active_navigation_chat_id:
             try:
                 await bot.edit_message_text(
                     text,
