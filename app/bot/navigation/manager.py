@@ -22,37 +22,29 @@ class NavigationMessageManager:
         force_new: bool = False,
     ) -> None:
         version = user.active_navigation_version + 1
-        if force_new:
-            await self.disable_old_keyboard(bot, user)
-            message = await bot.send_message(user.telegram_chat_id, text, reply_markup=keyboard)
-            user.active_navigation_chat_id, user.active_navigation_message_id = (
-                message.chat.id,
-                message.message_id,
-            )
-        elif user.active_navigation_message_id and user.active_navigation_chat_id:
-            try:
-                await bot.edit_message_text(
-                    text,
-                    chat_id=user.active_navigation_chat_id,
-                    message_id=user.active_navigation_message_id,
-                    reply_markup=keyboard,
-                )
-            except TelegramBadRequest:
-                await self.disable_old_keyboard(bot, user)
-                message = await bot.send_message(user.telegram_chat_id, text, reply_markup=keyboard)
-                user.active_navigation_chat_id, user.active_navigation_message_id = message.chat.id, message.message_id
-        else:
-            message = await bot.send_message(user.telegram_chat_id, text, reply_markup=keyboard)
-            user.active_navigation_chat_id, user.active_navigation_message_id = message.chat.id, message.message_id
+        await self.remove_active_navigation(bot, user)
+        message = await bot.send_message(user.telegram_chat_id, text, reply_markup=keyboard)
+        user.active_navigation_chat_id, user.active_navigation_message_id = message.chat.id, message.message_id
         user.active_navigation_screen = screen
         user.active_navigation_version = version
         await session.flush()
+
+    async def remove_active_navigation(self, bot: Bot, user: User) -> None:
+        """Delete only the previous navigation message so the next one is last."""
+        if user.active_navigation_message_id and user.active_navigation_chat_id:
+            try:
+                await bot.delete_message(
+                    chat_id=user.active_navigation_chat_id,
+                    message_id=user.active_navigation_message_id,
+                )
+            except TelegramBadRequest:
+                pass
 
     async def replace_screen(self, *args: object, **kwargs: object) -> None:
         await self.render_text_screen(*args, **kwargs)
 
     async def close_active_navigation(self, bot: Bot, user: User) -> None:
-        await self.disable_old_keyboard(bot, user)
+        await self.remove_active_navigation(bot, user)
         user.active_navigation_message_id = None
         user.active_navigation_chat_id = None
 

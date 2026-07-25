@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
 from aiogram import Bot
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.bot.keyboards import main_menu
 from app.bot.navigation.manager import NavigationMessageManager
+from app.core.config import get_settings
 from app.core.i18n import i18n
 from app.db.models import Search, SearchListing, User
 
@@ -41,20 +46,22 @@ async def available_listing_count(session: AsyncSession, search: Search | None) 
     return int(count or 0)
 
 
-async def main_screen(
-    bot: Bot,
-    session: AsyncSession,
-    user: User,
-    nav: NavigationMessageManager,
-    *,
-    notice: str | None = None,
-    force_new: bool = False,
-) -> None:
+def format_last_check(value: datetime | None) -> str:
+    if value is None:
+        return "—"
+    try:
+        timezone = ZoneInfo(get_settings().display_timezone)
+    except ZoneInfoNotFoundError:
+        timezone = ZoneInfo("UTC")
+    return value.astimezone(timezone).strftime("%d/%m %H:%M")
+
+
+async def main_screen_text(session: AsyncSession, user: User, *, notice: str | None = None) -> str:
     search = await latest_search(session, user)
     language = user.language
     location = search.location_display_name if search else "—"
     interval = (search.check_interval_minutes // 60) if search else 2
-    last_check = search.last_success_at.strftime("%d/%m %H:%M") if search and search.last_success_at else "—"
+    last_check = format_last_check(search.last_success_at if search else None)
     enabled = bool(search and search.is_active)
     available_count = await available_listing_count(session, search)
     parts = [i18n.text(language, "main-title")]
@@ -73,14 +80,47 @@ async def main_screen(
             i18n.text(language, "last-check", value=last_check),
         ]
     )
-    text = "\n\n".join(parts)
+    return "\n\n".join(parts)
+
+
+async def main_screen(
+    bot: Bot,
+    session: AsyncSession,
+    user: User,
+    nav: NavigationMessageManager,
+    *,
+    notice: str | None = None,
+    force_new: bool = False,
+) -> None:
+    text = await main_screen_text(session, user, notice=notice)
     version = user.active_navigation_version + 1
     await nav.render_text_screen(
         bot,
         session,
         user,
         text,
-        main_menu(language, version),
+        main_menu(user.language, version),
         "main",
         force_new=force_new,
     )
+
+
+async def refresh_visible_main_screen(bot: Bot, session: AsyncSession, user: User) -> None:
+    """Refresh an already visible main menu after a background monitor run."""
+    if (
+        user.active_navigation_screen != "main"
+        or user.active_navigation_chat_id is None
+        or user.active_navigation_message_id is None
+    ):
+        return
+    try:
+        await bot.edit_message_text(
+            await main_screen_text(session, user),
+            chat_id=user.active_navigation_chat_id,
+            message_id=user.active_navigation_message_id,
+            reply_markup=main_menu(user.language, user.active_navigation_version),
+        )
+    except TelegramBadRequest:
+        # The user may have deleted the navigation message. The next command
+        # or button interaction creates a fresh one.
+        return

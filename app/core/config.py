@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     webhook_secret: SecretStr | None = None
     crous_base_url: HttpUrl = HttpUrl("https://trouverunlogement.lescrous.fr")
     crous_locale: str = "fr"
+    display_timezone: str = "Europe/Paris"
     max_search_area_degrees: float = 4.0
     max_image_bytes: int = 8 * 1024 * 1024
     log_level: str = "INFO"

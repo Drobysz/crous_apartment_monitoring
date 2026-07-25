@@ -1,9 +1,12 @@
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
 import pytest
+from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.bot.services import available_listing_count
+from app.bot.navigation.manager import NavigationMessageManager
+from app.bot.services import available_listing_count, format_last_check
 from app.db.models import Base, Listing, Search, SearchListing, User
 
 
@@ -68,3 +71,46 @@ async def test_available_listing_count_is_scoped_to_the_current_search() -> None
         assert await available_listing_count(session, None) == 0
 
     await engine.dispose()
+
+
+def test_last_check_is_rendered_in_the_configured_paris_timezone() -> None:
+    assert format_last_check(datetime(2026, 7, 25, 17, 32, tzinfo=UTC)) == "25/07 19:32"
+
+
+@pytest.mark.asyncio
+async def test_navigation_replaces_the_previous_message_at_the_end_of_chat() -> None:
+    calls: list[tuple[str, tuple[object, ...], dict[str, object]]] = []
+
+    class FakeBot:
+        async def delete_message(self, *args: object, **kwargs: object) -> bool:
+            calls.append(("delete", args, kwargs))
+            return True
+
+        async def send_message(self, *args: object, **kwargs: object) -> SimpleNamespace:
+            calls.append(("send", args, kwargs))
+            return SimpleNamespace(chat=SimpleNamespace(id=99), message_id=100)
+
+    class FakeSession:
+        async def flush(self) -> None:
+            return None
+
+    user = User(
+        telegram_user_id=1,
+        telegram_chat_id=99,
+        language="ru",
+        active_navigation_chat_id=99,
+        active_navigation_message_id=10,
+        active_navigation_version=4,
+    )
+    await NavigationMessageManager().render_text_screen(
+        FakeBot(),  # type: ignore[arg-type]
+        FakeSession(),  # type: ignore[arg-type]
+        user,
+        "Updated navigation",
+        InlineKeyboardMarkup(inline_keyboard=[]),
+        "main",
+    )
+
+    assert [call[0] for call in calls] == ["delete", "send"]
+    assert user.active_navigation_message_id == 100
+    assert user.active_navigation_version == 5

@@ -78,6 +78,36 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             await nav.render_text_screen(message.bot, session, user, i18n.text(user.language, "language"), language_menu(user.language, version), "language")
             await session.commit()
 
+    @router.message(Command("range"))
+    async def range_command(message: Message) -> None:
+        async with session_factory() as session:
+            user = await user_for(message, session)
+            version = user.active_navigation_version + 1
+            await nav.render_text_screen(
+                message.bot,
+                session,
+                user,
+                i18n.text(user.language, "set-interval"),
+                interval_menu(user.language, version),
+                "interval",
+            )
+            await session.commit()
+
+    @router.message(Command("set_posistion", "set_position"))
+    async def set_position_command(message: Message, state: FSMContext) -> None:
+        async with session_factory() as session:
+            user = await user_for(message, session)
+            await state.clear()
+            await render_location(message.bot, session, user)
+            await session.commit()
+
+    @router.message(Command("available"))
+    async def available_command(message: Message) -> None:
+        async with session_factory() as session:
+            user = await user_for(message, session)
+            await send_current_listings_from_message(message, session, user)
+            await session.commit()
+
     @router.message(Command("help", "privacy"))
     async def informational_command(message: Message) -> None:
         async with session_factory() as session:
@@ -382,7 +412,8 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             )
             try:
                 await _send_current_listings(
-                    callback,
+                    callback.bot,
+                    callback.message,
                     session,
                     user,
                     search,
@@ -403,8 +434,49 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                 except TelegramBadRequest:
                     pass
 
+    async def send_current_listings_from_message(
+        message: Message,
+        session: AsyncSession,
+        user: User,
+    ) -> None:
+        search = await latest_search(session, user)
+        if not search:
+            await message.answer(i18n.text(user.language, "no-search"))
+            return
+        lock = listing_locks.setdefault(user.id, asyncio.Lock())
+        if lock.locked():
+            await message.answer(i18n.text(user.language, "list-loading"))
+            return
+        correlation_id = f"command:{message.message_id}"
+        async with lock:
+            loading_message = await message.answer(i18n.text(user.language, "list-loading"))
+            try:
+                await _send_current_listings(
+                    message.bot,
+                    message,
+                    session,
+                    user,
+                    search,
+                    correlation_id,
+                )
+            except (CrousUnavailable, httpx.HTTPError) as error:
+                logger.warning(
+                    "listing_request_failed",
+                    correlation_id=correlation_id,
+                    telegram_user_id=user.telegram_user_id,
+                    search_id=search.id,
+                    reason=str(error),
+                )
+                await message.answer(i18n.text(user.language, "error"))
+            finally:
+                try:
+                    await loading_message.delete()
+                except TelegramBadRequest:
+                    pass
+
     async def _send_current_listings(
-        callback: CallbackQuery,
+        bot: Bot,
+        reply_to: Message,
         session: AsyncSession,
         user: User,
         search: Search,
@@ -424,7 +496,7 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                     Bounds(search.bounds_west, search.bounds_north, search.bounds_east, search.bounds_south)
                 ),
             )
-            await callback.answer(i18n.text(user.language, "invalid-location-area"), show_alert=True)
+            await reply_to.answer(i18n.text(user.language, "invalid-location-area"))
             return
         listings = await crous.search(bounds, correlation_id=correlation_id)
         # Persist the exact snapshot before delivery so worker, database, and
@@ -439,14 +511,14 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             listing_count=len(listings),
         )
         if not listings:
-            await callback.message.answer(i18n.text(user.language, "no-listings"))
-            await main_screen(callback.bot, session, user, nav)
+            await reply_to.answer(i18n.text(user.language, "no-listings"))
+            await main_screen(bot, session, user, nav)
             return
         from app.bot.cards import send_accommodation_card
         for listing in listings[:5]:
             try:
                 sent_message_id = await send_accommodation_card(
-                    callback.bot,
+                    bot,
                     user.telegram_chat_id,
                     listing,
                     user.language,
@@ -470,7 +542,7 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                 external_listing_id=listing.external_id,
                 telegram_message_id=sent_message_id,
             )
-        await main_screen(callback.bot, session, user, nav)
+        await main_screen(bot, session, user, nav)
         logger.info(
             "listing_request_completed",
             correlation_id=correlation_id,

@@ -10,6 +10,7 @@ from aiogram.enums import ParseMode
 from arq import cron
 from arq.connections import RedisSettings
 
+from app.bot.services import refresh_visible_main_screen
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.crous.client import CrousClient
@@ -48,6 +49,7 @@ async def monitor_due_searches(_: dict[str, object]) -> None:
                             if user:
                                 for listing, kind in changes:
                                     await send_change(bot, session, user, search, listing, kind)
+                                await refresh_visible_main_screen(bot, session, user)
                             search.next_check_at = datetime.now(UTC) + timedelta(
                                 minutes=search.check_interval_minutes,
                                 seconds=random.randint(0, 120),
