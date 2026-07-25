@@ -10,6 +10,40 @@ def test_photon_uses_a_supported_locale_without_changing_the_ui_language() -> No
 
 
 @pytest.mark.asyncio
+async def test_forward_geocoding_deduplicates_same_city_and_postcode() -> None:
+    provider = PhotonProvider()
+    try:
+        places = provider._convert(
+            {
+                "features": [
+                    {
+                        "geometry": {"coordinates": [6.18, 48.69]},
+                        "properties": {
+                            "name": "Nancy",
+                            "postcode": "54000",
+                            "country": "France",
+                            "extent": [6.13, 48.71, 6.21, 48.66],
+                        },
+                    },
+                    {
+                        "geometry": {"coordinates": [6.19, 48.68]},
+                        "properties": {
+                            "city": "Nancy",
+                            "postcode": "54000",
+                            "country": "France",
+                            "extent": [6.13, 48.71, 6.21, 48.66],
+                        },
+                    },
+                ]
+            }
+        )
+    finally:
+        await provider.client.aclose()
+
+    assert [place.display_name for place in places] == ["Nancy (54000)"]
+
+
+@pytest.mark.asyncio
 async def test_photon_reads_city_extent_from_properties_not_a_point_fallback() -> None:
     provider = PhotonProvider()
     try:

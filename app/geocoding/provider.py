@@ -55,6 +55,7 @@ class PhotonProvider(GeocodingProvider):
 
     def _convert(self, payload: dict[str, Any]) -> list[GeocodedPlace]:
         places: list[GeocodedPlace] = []
+        seen: set[tuple[str, str, str]] = set()
         for feature in payload.get("features", []):
             props = feature.get("properties", {})
             lon, lat = feature.get("geometry", {}).get("coordinates", [None, None])
@@ -76,6 +77,10 @@ class PhotonProvider(GeocodingProvider):
                 continue
             city = props.get("city") or props.get("name")
             postcode = props.get("postcode")
+            identity = (str(city or "").casefold(), str(postcode or ""), country_code)
+            if not city or identity in seen:
+                continue
+            seen.add(identity)
             display = f"{city} ({postcode})" if city and postcode else str(city or props.get("name") or "Lieu")
             places.append(
                 GeocodedPlace(
