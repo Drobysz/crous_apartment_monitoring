@@ -8,9 +8,9 @@ import structlog
 
 from app.core.config import Settings, get_settings
 from app.crous.discovery import Tool, discover_current_tool
-from app.crous.exceptions import CrousUnavailable
+from app.crous.exceptions import CrousParseError, CrousUnavailable
 from app.crous.models import Bounds, CrousListing
-from app.crous.parser import parse_detail_page, parse_search_response
+from app.crous.parser import parse_search_response
 from app.searches.service import bounds_log_fields, listing_is_within_bounds, validate_bounds
 
 logger = structlog.get_logger(__name__)
@@ -50,6 +50,7 @@ class CrousClient:
         all_items: list[CrousListing] = []
         current_page = page
         total: int | None = None
+        raw_count = 0
         logger.info(
             "crous_search_request",
             endpoint=endpoint,
@@ -58,17 +59,35 @@ class CrousClient:
             correlation_id=correlation_id,
             **bounds_log_fields(bounds),
         )
-        while total is None or len(all_items) < total:
+        while True:
             body["page"] = current_page
             payload = await self._post_search(endpoint, body)
             results = payload.get("results")
             if not isinstance(results, dict):
-                return parse_search_response(payload, self.base_url, tool.id)
+                raise CrousParseError("CROUS response does not have a results object")
+            page_items = results.get("items")
+            if not isinstance(page_items, list):
+                raise CrousParseError("CROUS response does not have results.items")
             parsed = parse_search_response(payload, self.base_url, tool.id)
             all_items.extend(parsed)
+            raw_count += len(page_items)
             raw_total = (results.get("total") or {}).get("value")
-            total = int(raw_total) if isinstance(raw_total, int | float) else len(all_items)
-            if not parsed:
+            if isinstance(raw_total, int | float) and not isinstance(raw_total, bool):
+                total = int(raw_total)
+            elif isinstance(raw_total, str) and raw_total.isdigit():
+                total = int(raw_total)
+
+            # Pagination must be driven by raw records, never by the subset
+            # currently available after parsing. A page of unavailable items
+            # may legitimately be followed by an available page.
+            if total is not None:
+                if raw_count >= total:
+                    break
+                if not page_items:
+                    raise CrousUnavailable(
+                        f"CROUS returned only {raw_count} of {total} declared results"
+                    )
+            elif len(page_items) < page_size:
                 break
             current_page += 1
 
@@ -100,13 +119,6 @@ class CrousClient:
                 raise CrousUnavailable("CROUS returned a non-object search payload")
             return payload
         raise AssertionError("unreachable")
-
-    async def get_listing_details(self, url_or_id: str) -> dict[str, str | None]:
-        tool = await self.tool()
-        url = url_or_id if url_or_id.startswith("https://") else f"{self.base_url}/tools/{tool.id}/accommodations/{url_or_id}"
-        response = await self.client.get(url)
-        response.raise_for_status()
-        return parse_detail_page(response.text, url)
 
     async def health_check(self) -> bool:
         response = await self.client.get(f"{self.base_url}/api/health")

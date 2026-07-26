@@ -1,13 +1,10 @@
 from __future__ import annotations
 
 import re
-from html import unescape
 from typing import Any
 from urllib.parse import urljoin
 
-from selectolax.parser import HTMLParser
-
-from app.crous.exceptions import CrousAuthenticationRequired, CrousParseError, CrousUnavailable
+from app.crous.exceptions import CrousParseError
 from app.crous.models import CrousListing
 
 
@@ -45,7 +42,13 @@ def parse_search_response(payload: dict[str, Any], base_url: str, tool_id: int) 
     results = payload.get("results")
     if not isinstance(results, dict) or not isinstance(results.get("items"), list):
         raise CrousParseError("CROUS response does not have results.items")
-    return [parse_listing(item, base_url, tool_id) for item in results["items"] if item.get("available", True)]
+    parsed: list[CrousListing] = []
+    for item in results["items"]:
+        if not isinstance(item, dict):
+            raise CrousParseError("CROUS results.items contains a non-object record")
+        if item.get("available", True):
+            parsed.append(parse_listing(item, base_url, tool_id))
+    return parsed
 
 
 def parse_listing(item: dict[str, Any], base_url: str, tool_id: int) -> CrousListing:
@@ -84,37 +87,3 @@ def parse_listing(item: dict[str, Any], base_url: str, tool_id: int) -> CrousLis
         bed_information=beds, sanitary_information=sanitary, kitchen_information=kitchen,
         equipment=", ".join(equipment) or None, primary_image_url=image_url, raw_payload=item,
     )
-
-
-def detect_bad_html(html: str) -> None:
-    text = HTMLParser(html).text(separator=" ").lower()
-    if any(marker in text for marker in ("too many requests", "temporarily unavailable", "service indisponible")):
-        raise CrousUnavailable("CROUS overload page")
-    if "identification" in text and ("connexion" in text or "connectez-vous" in text):
-        raise CrousAuthenticationRequired("CROUS returned an authentication page")
-
-
-def extract_og_image(html: str, page_url: str) -> str | None:
-    document = HTMLParser(html)
-    for node in document.css('meta[property="og:image"], meta[name="twitter:image"]'):
-        content = node.attributes.get("content")
-        if content and not is_invalid_image(content):
-            return urljoin(page_url, content)
-    return None
-
-
-def is_invalid_image(url: str) -> bool:
-    lowered = url.lower()
-    return any(marker in lowered for marker in ("logo", "icon", "sprite", "tracking", ".svg", "pixel"))
-
-
-def parse_detail_page(html: str, page_url: str) -> dict[str, str | None]:
-    detect_bad_html(html)
-    document = HTMLParser(html)
-    title = document.css_first("h1")
-    description = document.css_first("meta[name='description']")
-    return {
-        "title": normalize_space(title.text()) if title else None,
-        "short_description": normalize_space(unescape(description.attributes.get("content") or "")) if description else None,
-        "primary_image_url": extract_og_image(html, page_url),
-    }

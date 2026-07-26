@@ -27,7 +27,7 @@ Audit date: 2026-07-26
 | HTTP API | FastAPI 0.140.0, Uvicorn 0.51.0 | Current FastAPI/Pydantic 2 stack; application import and tests pass. |
 | Persistence | SQLAlchemy 2.0.51, asyncpg 0.31.0, Alembic 1.18.5 | Kept on SQLAlchemy 2.0 line; async migration path is verified. |
 | Queue | ARQ 0.28.0, redis-py 5.3.1 | ARQ constrains redis-py below 6, so redis-py 8 is intentionally not selected. |
-| HTTP/parsing | httpx 0.28.1, selectolax 0.4.11 | Current compatible releases. |
+| HTTP/parsing | httpx 0.28.1 | CROUS results are consumed as JSON; no HTML parser is required. |
 | Configuration/logging | pydantic-settings 2.14.2, structlog 26.1.0 | Current Pydantic 2-compatible releases. |
 | Development | pytest 9.1.1, pytest-asyncio 1.4.0, Ruff 0.16.0, mypy 2.3.0 | The pytest/pytest-asyncio major updates were validated by the full test suite. |
 

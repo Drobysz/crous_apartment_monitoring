@@ -35,24 +35,40 @@ async def _active_group(session: AsyncSession, search_id: int) -> SearchDisplayG
     )
 
 
-async def _cleanup_group(bot: Bot, session: AsyncSession, group: SearchDisplayGroup) -> None:
+async def _cleanup_group(bot: Bot, session: AsyncSession, group: SearchDisplayGroup) -> bool:
+    """Delete tracked cards best-effort; retain transient failures for retry."""
     messages = (await session.scalars(select(SearchDisplayMessage).where(SearchDisplayMessage.display_group_id == group.id))).all()
+    complete = True
     for message in messages:
         try:
             await bot.delete_message(group.telegram_chat_id, message.telegram_message_id)
         except (TelegramBadRequest, TelegramForbiddenError):
             # A deleted/blocked message is terminal; retaining its row would
             # make future cleanup retry forever.
-            pass
-        finally:
             await session.delete(message)
-    group.status = "retired"
-    group.retired_at = datetime.now(UTC)
+        except Exception as error:
+            complete = False
+            logger.warning(
+                "search_display_card_cleanup_failed",
+                search_id=group.search_id,
+                group_id=group.id,
+                message_id=message.telegram_message_id,
+                reason=str(error),
+            )
+        else:
+            await session.delete(message)
+    if complete:
+        group.status = "retired"
+        group.retired_at = datetime.now(UTC)
+    return complete
 
 
-async def recover_pending_groups(bot: Bot, session: AsyncSession, search_id: int) -> None:
+async def recover_incomplete_groups(bot: Bot, session: AsyncSession, search_id: int) -> None:
     pending = (await session.scalars(
-        select(SearchDisplayGroup).where(SearchDisplayGroup.search_id == search_id, SearchDisplayGroup.status == "pending")
+        select(SearchDisplayGroup).where(
+            SearchDisplayGroup.search_id == search_id,
+            SearchDisplayGroup.status.in_(("pending", "failed", "retiring")),
+        )
     )).all()
     for group in pending:
         await _cleanup_group(bot, session, group)
@@ -85,7 +101,7 @@ async def synchronize_search(
         items, fingerprint = canonical_snapshot(raw_items)
         logger.info("search_sync_fetch_completed", correlation_id=correlation_id, search_id=search.id, raw_count=len(raw_items), listing_count=len(items), fingerprint=fingerprint)
 
-        await recover_pending_groups(bot, session, search.id)
+        await recover_incomplete_groups(bot, session, search.id)
         active = await _active_group(session, search.id)
         now = datetime.now(UTC)
         if active and active.fingerprint == fingerprint:

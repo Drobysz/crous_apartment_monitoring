@@ -7,7 +7,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.crous.models import CrousListing
-from app.db.models import Base, Search, SearchDisplayGroup, SearchDisplayMessage, User
+from app.db.models import (
+    Base,
+    Listing,
+    Search,
+    SearchDisplayGroup,
+    SearchDisplayMessage,
+    SearchListing,
+    User,
+)
 from app.monitoring.service import SnapshotDeliveryError, synchronize_search
 from app.monitoring.snapshot import canonical_snapshot
 
@@ -94,6 +102,12 @@ async def test_changed_snapshot_replaces_only_its_own_message_group() -> None:
         assert len(active) == 1
         assert active[0].listing_count == 2
         assert {message.telegram_message_id for message in messages} == {3, 4}
+        removed_listing = await session.scalar(select(Listing).where(Listing.external_id == "two"))
+        assert removed_listing is not None
+        removed_link = await session.get(SearchListing, (search_id, removed_listing.id))
+        assert removed_link is not None
+        assert not removed_link.is_currently_available
+        assert removed_link.disappeared_at is not None
     await engine.dispose()
 
 

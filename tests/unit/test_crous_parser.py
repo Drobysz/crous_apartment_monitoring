@@ -3,8 +3,8 @@ from pathlib import Path
 
 import pytest
 
-from app.crous.exceptions import CrousAuthenticationRequired, CrousParseError, CrousUnavailable
-from app.crous.parser import detect_bad_html, parse_price, parse_search_response, parse_surface
+from app.crous.exceptions import CrousParseError
+from app.crous.parser import parse_price, parse_search_response, parse_surface
 
 
 def test_structured_crous_listing_is_normalized() -> None:
@@ -22,10 +22,10 @@ def test_french_numeric_parsing() -> None:
     assert parse_surface("de 23 à 28 m²") == (23.0, 28.0)
 
 
-@pytest.mark.parametrize(("html", "exception"), [("<h1>Too many requests</h1>", CrousUnavailable), ("<h1>Identification</h1>Connectez-vous", CrousAuthenticationRequired)])
-def test_error_pages_are_not_treated_as_empty_results(html: str, exception: type[Exception]) -> None:
-    with pytest.raises(exception): detect_bad_html(html)
-
-
 def test_malformed_payload_is_not_treated_as_empty_results() -> None:
     with pytest.raises(CrousParseError): parse_search_response({}, "https://example.com", 1)
+
+
+def test_unavailable_json_records_are_excluded_without_html_fallback() -> None:
+    payload = {"results": {"items": [{"id": 1, "label": "Unavailable", "available": False}]}}
+    assert parse_search_response(payload, "https://example.com", 1) == []
