@@ -60,8 +60,8 @@ async def main_screen_text(session: AsyncSession, user: User, *, notice: str | N
     search = await latest_search(session, user)
     language = user.language
     location = search.location_display_name if search else "—"
-    interval = (search.check_interval_minutes // 60) if search else 2
     last_check = format_last_check(search.last_success_at if search else None)
+    last_change = format_last_check(search.last_changed_at if search else None)
     enabled = bool(search and search.is_active)
     available_count = await available_listing_count(session, search)
     parts = [i18n.text(language, "main-title")]
@@ -70,7 +70,6 @@ async def main_screen_text(session: AsyncSession, user: User, *, notice: str | N
     parts.extend(
         [
             i18n.text(language, "area", value=location),
-            i18n.text(language, "interval", hours=interval),
             i18n.text(
                 language,
                 "monitoring",
@@ -78,6 +77,7 @@ async def main_screen_text(session: AsyncSession, user: User, *, notice: str | N
             ),
             i18n.text(language, "available-count", count=available_count),
             i18n.text(language, "last-check", value=last_check),
+            i18n.text(language, "last-change", value=last_change),
         ]
     )
     return "\n\n".join(parts)

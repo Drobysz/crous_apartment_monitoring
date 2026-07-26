@@ -27,7 +27,7 @@ flowchart LR
 
 ## Data design
 
-`users` has Telegram identity, language, and the one active navigation-message token. `searches` owns the selected place, bounds, interval, baseline and retry state. `listings` stores CROUS’s stable external ID plus normalized display data and raw payload. `search_listings` is the availability history that detects new/reappeared items. `notifications`, `image_cache`, and `geocoding_cache` provide idempotent delivery and short-lived caching.
+`users` has Telegram identity, language, and the one active navigation-message token. `searches` owns the selected place, bounds, current snapshot fingerprint, and retry state; every active search is checked on the shared five-minute cadence. `listings` stores CROUS’s stable external ID plus normalized display data and raw payload. `search_listings` is the current search-scoped availability snapshot. `search_display_groups` and `search_display_messages` persist exactly the Telegram cards belonging to the active list, so a changed list can be sent safely before the prior list is retired. Historical `notifications`, `image_cache`, and `geocoding_cache` are retained for compatibility and caching.
 
 ## Interaction and delivery
 

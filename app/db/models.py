@@ -60,13 +60,41 @@ class Search(Timestamped, Base):
     bounds_north: Mapped[float]
     bounds_east: Mapped[float]
     bounds_south: Mapped[float]
-    check_interval_minutes: Mapped[int] = mapped_column(default=120)
-    next_check_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    snapshot_fingerprint: Mapped[str | None] = mapped_column(String(64))
     consecutive_errors: Mapped[int] = mapped_column(default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    is_initialized: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class SearchDisplayGroup(Base):
+    """One complete Telegram rendering of a search snapshot.
+
+    A group is made active only after every message has been sent and recorded.
+    This leaves a previously active list recoverable when Telegram delivery fails.
+    """
+
+    __tablename__ = "search_display_groups"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    search_id: Mapped[int] = mapped_column(ForeignKey("searches.id", ondelete="CASCADE"), index=True)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger)
+    fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    listing_count: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    activated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class SearchDisplayMessage(Base):
+    __tablename__ = "search_display_messages"
+    __table_args__ = (UniqueConstraint("display_group_id", "telegram_message_id", name="uq_display_message"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    display_group_id: Mapped[int] = mapped_column(ForeignKey("search_display_groups.id", ondelete="CASCADE"), index=True)
+    telegram_message_id: Mapped[int] = mapped_column(BigInteger)
+    message_kind: Mapped[str] = mapped_column(String(16), default="card")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Listing(Timestamped, Base):

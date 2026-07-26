@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     display_timezone: str = "Europe/Paris"
     max_search_area_degrees: float = 4.0
     max_image_bytes: int = 8 * 1024 * 1024
+    monitoring_interval_seconds: int = 5 * 60
+    monitoring_lock_ttl_seconds: int = 2 * 60
+    monitoring_max_retries: int = 3
+    monitoring_retry_base_seconds: int = 15
     log_level: str = "INFO"
 
 

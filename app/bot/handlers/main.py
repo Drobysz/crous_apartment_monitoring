@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import asyncio
-from datetime import UTC, datetime, timedelta
-
 import httpx
 import structlog
 from aiogram import Bot, Router
@@ -16,27 +13,27 @@ from aiogram.types import (
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
 )
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.bot.callbacks import NavCallback
-from app.bot.keyboards import back, interval_menu, language_menu, location_menu, radius_menu
+from app.bot.keyboards import back, language_menu, location_menu, radius_menu
 from app.bot.navigation.manager import NavigationMessageManager
 from app.bot.services import get_or_create_user, latest_search, main_screen
 from app.bot.states import LocationFlow
+from app.core.config import get_settings
 from app.core.i18n import i18n
 from app.crous.client import CrousClient
 from app.crous.exceptions import CrousUnavailable
-from app.crous.models import Bounds
 from app.db.models import Search, User
 from app.geocoding.base import GeocodingProvider
 from app.geocoding.models import GeocodedPlace
-from app.notifications.service import apply_snapshot
+from app.monitoring.locks import SearchLock
+from app.monitoring.service import SnapshotDeliveryError, synchronize_search
 from app.searches.service import (
     InvalidBounds,
     bounds_from_serialized,
-    bounds_log_fields,
     radius_bounds,
-    validate_bounds,
 )
 
 logger = structlog.get_logger(__name__)
@@ -45,7 +42,17 @@ logger = structlog.get_logger(__name__)
 def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: GeocodingProvider, crous: CrousClient) -> Router:
     router = Router(name="main")
     nav = NavigationMessageManager()
-    listing_locks: dict[int, asyncio.Lock] = {}
+
+    async def run_search_sync(search_id: int, bot: Bot, correlation_id: str) -> str:
+        settings = get_settings()
+        redis = Redis.from_url(settings.redis_url, decode_responses=True)
+        try:
+            async with SearchLock(redis, search_id, settings.monitoring_lock_ttl_seconds) as acquired:
+                if not acquired:
+                    return "busy"
+                return await synchronize_search(session_factory, bot, crous, search_id, correlation_id=correlation_id)
+        finally:
+            await redis.aclose()
 
     async def user_for(message: Message | CallbackQuery, session: AsyncSession) -> User:
         source = message.from_user
@@ -76,21 +83,6 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             user = await user_for(message, session)
             version = user.active_navigation_version + 1
             await nav.render_text_screen(message.bot, session, user, i18n.text(user.language, "language"), language_menu(user.language, version), "language")
-            await session.commit()
-
-    @router.message(Command("range"))
-    async def range_command(message: Message) -> None:
-        async with session_factory() as session:
-            user = await user_for(message, session)
-            version = user.active_navigation_version + 1
-            await nav.render_text_screen(
-                message.bot,
-                session,
-                user,
-                i18n.text(user.language, "set-interval"),
-                interval_menu(user.language, version),
-                "interval",
-            )
             await session.commit()
 
     @router.message(Command("set_posistion", "set_position"))
@@ -126,7 +118,6 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                 await message.answer(i18n.text(user.language, "no-search")); return
             pause = message.text and message.text.startswith("/pause")
             search.is_active = not pause
-            if not pause: search.next_check_at = datetime.now(UTC)
             await main_screen(message.bot, session, user, nav)
             await session.commit()
 
@@ -168,15 +159,6 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                 await nav.render_text_screen(callback.bot, session, user, i18n.text(user.language, "language"), language_menu(user.language, version), "language")
             elif action == "lang":
                 user.language = ("ru", "fr", "ar")[callback_data.entity]
-                await main_screen(callback.bot, session, user, nav)
-            elif action == "interval":
-                version = user.active_navigation_version + 1
-                await nav.render_text_screen(callback.bot, session, user, i18n.text(user.language, "set-interval"), interval_menu(user.language, version), "interval")
-            elif action == "interval-set":
-                search = await latest_search(session, user)
-                if search:
-                    search.check_interval_minutes = callback_data.entity * 60
-                    search.next_check_at = datetime.now(UTC) + timedelta(minutes=search.check_interval_minutes)
                 await main_screen(callback.bot, session, user, nav)
             elif action == "city":
                 await state.set_state(LocationFlow.city_input)
@@ -372,9 +354,7 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             "bounds_north": bounds.north,
             "bounds_east": bounds.east,
             "bounds_south": bounds.south,
-            "next_check_at": datetime.now(UTC),
             "is_active": True,
-            "is_initialized": False,
             "consecutive_errors": 0,
         }
         if search is None:
@@ -390,49 +370,22 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         search = await latest_search(session, user)
         if not search:
             await callback.answer(i18n.text(user.language, "no-search"), show_alert=True); return
-        lock = listing_locks.setdefault(user.id, asyncio.Lock())
-        if lock.locked():
-            await callback.answer(i18n.text(user.language, "list-loading"), show_alert=False)
-            logger.info(
-                "listing_request_deduplicated",
-                callback_query_id=callback.id,
-                telegram_user_id=user.telegram_user_id,
-                search_id=search.id,
-            )
-            return
         correlation_id = callback.id
-        async with lock:
-            loading_message = await callback.message.answer(i18n.text(user.language, "list-loading"))
-            logger.info(
-                "listing_request_started",
-                correlation_id=correlation_id,
-                telegram_user_id=user.telegram_user_id,
-                chat_id=user.telegram_chat_id,
-                search_id=search.id,
-            )
+        loading_message = await callback.message.answer(i18n.text(user.language, "list-loading"))
+        try:
+            result = await run_search_sync(search.id, callback.bot, correlation_id)
+            if result == "busy":
+                await callback.message.answer(i18n.text(user.language, "list-loading"))
+            elif result == "unchanged":
+                await callback.answer(i18n.text(user.language, "list-current"), show_alert=False)
+        except (SnapshotDeliveryError, CrousUnavailable, httpx.HTTPError) as error:
+            logger.warning("listing_request_failed", correlation_id=correlation_id, telegram_user_id=user.telegram_user_id, search_id=search.id, reason=str(error))
+            await callback.message.answer(i18n.text(user.language, "error"))
+        finally:
             try:
-                await _send_current_listings(
-                    callback.bot,
-                    callback.message,
-                    session,
-                    user,
-                    search,
-                    correlation_id,
-                )
-            except (CrousUnavailable, httpx.HTTPError) as error:
-                logger.warning(
-                    "listing_request_failed",
-                    correlation_id=correlation_id,
-                    telegram_user_id=user.telegram_user_id,
-                    search_id=search.id,
-                    reason=str(error),
-                )
-                await callback.message.answer(i18n.text(user.language, "error"))
-            finally:
-                try:
-                    await loading_message.delete()
-                except TelegramBadRequest:
-                    pass
+                await loading_message.delete()
+            except TelegramBadRequest:
+                pass
 
     async def send_current_listings_from_message(
         message: Message,
@@ -443,112 +396,21 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         if not search:
             await message.answer(i18n.text(user.language, "no-search"))
             return
-        lock = listing_locks.setdefault(user.id, asyncio.Lock())
-        if lock.locked():
-            await message.answer(i18n.text(user.language, "list-loading"))
-            return
         correlation_id = f"command:{message.message_id}"
-        async with lock:
-            loading_message = await message.answer(i18n.text(user.language, "list-loading"))
-            try:
-                await _send_current_listings(
-                    message.bot,
-                    message,
-                    session,
-                    user,
-                    search,
-                    correlation_id,
-                )
-            except (CrousUnavailable, httpx.HTTPError) as error:
-                logger.warning(
-                    "listing_request_failed",
-                    correlation_id=correlation_id,
-                    telegram_user_id=user.telegram_user_id,
-                    search_id=search.id,
-                    reason=str(error),
-                )
-                await message.answer(i18n.text(user.language, "error"))
-            finally:
-                try:
-                    await loading_message.delete()
-                except TelegramBadRequest:
-                    pass
-
-    async def _send_current_listings(
-        bot: Bot,
-        reply_to: Message,
-        session: AsyncSession,
-        user: User,
-        search: Search,
-        correlation_id: str,
-    ) -> None:
+        loading_message = await message.answer(i18n.text(user.language, "list-loading"))
         try:
-            bounds = validate_bounds(
-                Bounds(search.bounds_west, search.bounds_north, search.bounds_east, search.bounds_south)
-            )
-        except InvalidBounds as error:
-            logger.warning(
-                "invalid_persisted_search_bounds",
-                telegram_user_id=user.telegram_user_id,
-                search_id=search.id,
-                reason=str(error),
-                **bounds_log_fields(
-                    Bounds(search.bounds_west, search.bounds_north, search.bounds_east, search.bounds_south)
-                ),
-            )
-            await reply_to.answer(i18n.text(user.language, "invalid-location-area"))
-            return
-        listings = await crous.search(bounds, correlation_id=correlation_id)
-        # Persist the exact snapshot before delivery so worker, database, and
-        # the first button press all observe the same search-scoped set.
-        await apply_snapshot(session, search, listings)
-        await session.commit()
-        logger.info(
-            "listing_snapshot_committed",
-            correlation_id=correlation_id,
-            telegram_user_id=user.telegram_user_id,
-            search_id=search.id,
-            listing_count=len(listings),
-        )
-        if not listings:
-            await reply_to.answer(i18n.text(user.language, "no-listings"))
-            await main_screen(bot, session, user, nav)
-            return
-        from app.bot.cards import send_accommodation_card
-        for listing in listings[:5]:
+            result = await run_search_sync(search.id, message.bot, correlation_id)
+            if result == "busy":
+                await message.answer(i18n.text(user.language, "list-loading"))
+            elif result == "unchanged":
+                await message.answer(i18n.text(user.language, "list-current"))
+        except (SnapshotDeliveryError, CrousUnavailable, httpx.HTTPError) as error:
+            logger.warning("listing_request_failed", correlation_id=correlation_id, telegram_user_id=user.telegram_user_id, search_id=search.id, reason=str(error))
+            await message.answer(i18n.text(user.language, "error"))
+        finally:
             try:
-                sent_message_id = await send_accommodation_card(
-                    bot,
-                    user.telegram_chat_id,
-                    listing,
-                    user.language,
-                    datetime.now(UTC),
-                )
-            except Exception as error:
-                logger.exception(
-                    "listing_card_send_failed",
-                    correlation_id=correlation_id,
-                    telegram_user_id=user.telegram_user_id,
-                    search_id=search.id,
-                    external_listing_id=listing.external_id,
-                    reason=str(error),
-                )
-                continue
-            logger.info(
-                "listing_card_sent",
-                correlation_id=correlation_id,
-                telegram_user_id=user.telegram_user_id,
-                search_id=search.id,
-                external_listing_id=listing.external_id,
-                telegram_message_id=sent_message_id,
-            )
-        await main_screen(bot, session, user, nav)
-        logger.info(
-            "listing_request_completed",
-            correlation_id=correlation_id,
-            telegram_user_id=user.telegram_user_id,
-            search_id=search.id,
-            rendered_count=min(len(listings), 5),
-        )
+                await loading_message.delete()
+            except TelegramBadRequest:
+                pass
 
     return router

@@ -5,6 +5,7 @@ import pytest
 from aiogram.types import InlineKeyboardMarkup
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from app.bot.keyboards import main_menu
 from app.bot.navigation.manager import NavigationMessageManager
 from app.bot.services import available_listing_count, format_last_check
 from app.db.models import Base, Listing, Search, SearchListing, User
@@ -75,6 +76,12 @@ async def test_available_listing_count_is_scoped_to_the_current_search() -> None
 
 def test_last_check_is_rendered_in_the_configured_paris_timezone() -> None:
     assert format_last_check(datetime(2026, 7, 25, 17, 32, tzinfo=UTC)) == "25/07 19:32"
+
+
+def test_main_menu_has_no_per_user_monitoring_interval() -> None:
+    actions = [button.callback_data for row in main_menu("ru", 1).inline_keyboard for button in row]
+    assert all(action is None or "interval" not in action for action in actions)
+    assert len(actions) == 3
 
 
 @pytest.mark.asyncio
