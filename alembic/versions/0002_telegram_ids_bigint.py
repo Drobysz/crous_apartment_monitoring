@@ -8,7 +8,6 @@ from sqlalchemy import BigInteger, Integer
 
 from alembic import op
 
-
 revision = "0002_telegram_ids_bigint"
 down_revision = "0001_initial"
 branch_labels = None
