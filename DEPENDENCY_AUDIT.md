@@ -38,9 +38,11 @@ Audit date: 2026-07-26
   dependency range. Upgrade it as a separately planned datastore migration.
 - PostgreSQL remains on major version 16 and is updated to patch 16.14. A
   PostgreSQL major upgrade needs a backup and data migration plan.
-- Docker image CVE scanning could not run in this audit because the local
-  Docker daemon was unavailable. Re-run `docker scout cves` after Docker is
-  running; Python package vulnerability auditing completed successfully.
+- Docker image CVE scanning requires a Docker Scout login in this environment,
+  so it could not complete anonymously. The images were rebuilt from scratch
+  and started successfully; run `docker login` followed by `docker scout cves`
+  in CI or a logged-in production environment. Python package vulnerability
+  auditing completed successfully.
 
 ## Repeatable checks
 
