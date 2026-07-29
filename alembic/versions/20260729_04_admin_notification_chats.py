@@ -1,7 +1,7 @@
 """Register notification chats only after active-admin username verification.
 
-Revision ID: 20260729_04_admin_notification_chats
-Revises: 20260729_03_usernames_and_filter_codes
+Revision ID: 20260729_04_notify
+Revises: 20260729_03_filters
 Create Date: 2026-07-29
 """
 
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "20260729_04_admin_notification_chats"
-down_revision = "20260729_03_usernames_and_filter_codes"
+revision = "20260729_04_notify"
+down_revision = "20260729_03_filters"
 branch_labels = None
 depends_on = None
 
@@ -26,9 +26,6 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.ForeignKeyConstraint(["admin_id"], ["admins.id"], name="fk_admin_notification_chats_admin_id_admins", ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id", name="pk_admin_notification_chats"),
-        sa.UniqueConstraint("admin_id", name="uq_admin_notification_chats_admin_id"),
-        sa.UniqueConstraint("telegram_user_id", name="uq_admin_notification_chats_telegram_user_id"),
-        sa.UniqueConstraint("telegram_chat_id", name="uq_admin_notification_chats_telegram_chat_id"),
     )
     op.create_index("ix_admin_notification_chats_admin_id", "admin_notification_chats", ["admin_id"], unique=True)
     op.create_index("ix_admin_notification_chats_telegram_user_id", "admin_notification_chats", ["telegram_user_id"], unique=True)

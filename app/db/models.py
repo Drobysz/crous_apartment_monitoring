@@ -7,6 +7,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Integer,
@@ -225,6 +226,7 @@ class GeocodingCache(Base):
 
 class Admin(Timestamped, Base):
     __tablename__ = "admins"
+    __table_args__ = (CheckConstraint("role IN ('admin', 'superadmin')", name="ck_admins_role"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(128))
     username: Mapped[str] = mapped_column(String(33))

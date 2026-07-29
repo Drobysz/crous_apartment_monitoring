@@ -9,8 +9,8 @@ The executable legacy files intentionally do not remain in this repository:
 they must not be accidentally selected by Alembic, and the archived initial
 revision contained the prohibited metadata-wide create/drop calls. The complete
 historical source remains recoverable from Git before commit
-`20260729_01_baseline`; the active schema is now the explicit,
-reviewable `20260729_01_baseline` revision.
+`20260729_01_base`; the active schema is now the explicit, reviewable linear
+chain beginning at `20260729_01_base`.
 
 See [MIGRATIONS.md](../../MIGRATIONS.md) for the safe procedure to stamp an
 already-current database onto the new baseline.

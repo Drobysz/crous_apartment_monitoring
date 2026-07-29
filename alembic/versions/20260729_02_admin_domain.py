@@ -1,7 +1,7 @@
 """Add administration identities, sessions, audits, and transaction mode.
 
-Revision ID: 20260729_02_admin_domain
-Revises: 20260729_01_baseline
+Revision ID: 20260729_02_admin
+Revises: 20260729_01_base
 Create Date: 2026-07-29
 """
 
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "20260729_02_admin_domain"
-down_revision = "20260729_01_baseline"
+revision = "20260729_02_admin"
+down_revision = "20260729_01_base"
 branch_labels = None
 depends_on = None
 
@@ -21,6 +21,7 @@ def upgrade() -> None:
         sa.Column("is_test", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
     op.create_index("ix_purchases_is_test", "purchases", ["is_test"])
+    op.alter_column("purchases", "is_test", server_default=None)
 
     op.create_table(
         "admins",
@@ -29,14 +30,13 @@ def upgrade() -> None:
         sa.Column("username", sa.String(length=33), nullable=False),
         sa.Column("username_key", sa.String(length=32), nullable=False),
         sa.Column("password_hash", sa.String(length=255), nullable=False),
-        sa.Column("role", sa.String(length=16), nullable=False, server_default="admin"),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column("role", sa.String(length=16), nullable=False),
+        sa.Column("is_active", sa.Boolean(), nullable=False),
         sa.Column("last_login_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
         sa.CheckConstraint("role IN ('admin', 'superadmin')", name="ck_admins_role"),
         sa.PrimaryKeyConstraint("id", name="pk_admins"),
-        sa.UniqueConstraint("username_key", name="uq_admins_username_key"),
     )
     op.create_index("ix_admins_role", "admins", ["role"])
     op.create_index("ix_admins_is_active", "admins", ["is_active"])
@@ -54,7 +54,6 @@ def upgrade() -> None:
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
         sa.ForeignKeyConstraint(["admin_id"], ["admins.id"], name="fk_admin_sessions_admin_id_admins", ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id", name="pk_admin_sessions"),
-        sa.UniqueConstraint("refresh_token_hash", name="uq_admin_sessions_refresh_token_hash"),
     )
     op.create_index("ix_admin_sessions_admin_id", "admin_sessions", ["admin_id"])
     op.create_index("ix_admin_sessions_refresh_token_hash", "admin_sessions", ["refresh_token_hash"], unique=True)

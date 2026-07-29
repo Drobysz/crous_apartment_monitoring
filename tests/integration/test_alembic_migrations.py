@@ -1,8 +1,7 @@
-"""Round-trip validation for the explicit Alembic baseline.
+"""End-to-end validation for the explicit Alembic migration chain.
 
 Set MIGRATION_TEST_DATABASE_URL to a dedicated disposable PostgreSQL database.
-The test intentionally performs a destructive downgrade to prove the baseline
-can be recreated; it never reads DATABASE_URL.
+This test intentionally destroys its schema; it never reads DATABASE_URL.
 """
 
 import asyncio
@@ -18,6 +17,11 @@ from alembic import command
 from app.core.config import get_settings
 
 pytestmark = pytest.mark.integration
+
+BASE = "20260729_01_base"
+ADMIN = "20260729_02_admin"
+FILTERS = "20260729_03_filters"
+HEAD = "20260729_04_notify"
 
 EXPECTED_TABLES = {
     "admin_audits",
@@ -44,32 +48,36 @@ def _migration_config() -> Config:
     return Config(str(Path(__file__).parents[2] / "alembic.ini"))
 
 
-async def _schema_snapshot(database_url: str) -> tuple[set[str], list[str], list[tuple[str, int]]]:
+async def _schema_snapshot(
+    database_url: str,
+) -> tuple[set[str], set[str], set[str], list[tuple[str, int]], str | None]:
     engine = create_async_engine(database_url)
     try:
         async with engine.connect() as connection:
-            table_names = await connection.run_sync(lambda sync_connection: set(inspect(sync_connection).get_table_names()))
-            columns = await connection.run_sync(
-                lambda sync_connection: [
-                    column["name"] for column in inspect(sync_connection).get_columns("searches")
-                ]
+            table_names = await connection.run_sync(lambda sync: set(inspect(sync).get_table_names()))
+            search_columns = await connection.run_sync(
+                lambda sync: {column["name"] for column in inspect(sync).get_columns("searches")}
+            )
+            user_columns = await connection.run_sync(
+                lambda sync: {column["name"] for column in inspect(sync).get_columns("users")}
             )
             plans = (await connection.execute(text("SELECT code, price_cents FROM subscription_plans ORDER BY code"))).all()
+            version = (await connection.execute(text("SELECT version_num FROM alembic_version"))).scalar_one_or_none()
     finally:
         await engine.dispose()
-    return table_names, columns, plans
+    return table_names, search_columns, user_columns, plans, version
 
 
 async def _table_names(database_url: str) -> set[str]:
     engine = create_async_engine(database_url)
     try:
         async with engine.connect() as connection:
-            return await connection.run_sync(lambda sync_connection: set(inspect(sync_connection).get_table_names()))
+            return await connection.run_sync(lambda sync: set(inspect(sync).get_table_names()))
     finally:
         await engine.dispose()
 
 
-def test_baseline_upgrade_downgrade_upgrade(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_full_migration_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
     database_url = os.environ.get("MIGRATION_TEST_DATABASE_URL")
     if not database_url:
         pytest.skip("MIGRATION_TEST_DATABASE_URL is required for migration integration tests")
@@ -78,19 +86,54 @@ def test_baseline_upgrade_downgrade_upgrade(monkeypatch: pytest.MonkeyPatch) -> 
     get_settings.cache_clear()
     config = _migration_config()
     try:
-        command.upgrade(config, "head")
-        tables, search_columns, plans = asyncio.run(_schema_snapshot(database_url))
-        assert EXPECTED_TABLES == tables
-        assert search_columns.count("last_changed_at") == 1
-        assert plans == [("lifetime", 2400), ("season", 1000)]
+        command.downgrade(config, "base")
 
+        command.upgrade(config, BASE)
+        tables, search_columns, user_columns, plans, version = asyncio.run(_schema_snapshot(database_url))
+        assert "searches" in tables
+        assert "admins" not in tables
+        assert "admin_notification_chats" not in tables
+        assert "telegram_username" not in user_columns
+        assert plans == [("lifetime", 2400), ("season", 1000)]
+        assert version == BASE
+
+        command.upgrade(config, ADMIN)
+        tables, _, user_columns, _, version = asyncio.run(_schema_snapshot(database_url))
+        assert {"admins", "admin_sessions", "admin_audits"} <= tables
+        assert "admin_notification_chats" not in tables
+        assert "telegram_username" not in user_columns
+        assert version == ADMIN
+
+        command.upgrade(config, FILTERS)
+        tables, _, user_columns, _, version = asyncio.run(_schema_snapshot(database_url))
+        assert "admin_notification_chats" not in tables
+        assert "telegram_username" in user_columns
+        assert version == FILTERS
+
+        command.upgrade(config, HEAD)
+        first_snapshot = asyncio.run(_schema_snapshot(database_url))
+        tables, search_columns, _, plans, version = first_snapshot
+        assert tables == EXPECTED_TABLES
+        assert "last_changed_at" in search_columns
+        assert plans == [("lifetime", 2400), ("season", 1000)]
+        assert version == HEAD
+        command.check(config)
+
+        command.downgrade(config, FILTERS)
+        assert "admin_notification_chats" not in asyncio.run(_table_names(database_url))
+        command.downgrade(config, ADMIN)
+        _, _, user_columns, _, version = asyncio.run(_schema_snapshot(database_url))
+        assert "telegram_username" not in user_columns
+        assert version == ADMIN
+        command.downgrade(config, BASE)
+        assert "admins" not in asyncio.run(_table_names(database_url))
         command.downgrade(config, "base")
         assert asyncio.run(_table_names(database_url)) == {"alembic_version"}
 
         command.upgrade(config, "head")
-        tables, search_columns, plans = asyncio.run(_schema_snapshot(database_url))
-        assert EXPECTED_TABLES == tables
-        assert search_columns.count("last_changed_at") == 1
-        assert plans == [("lifetime", 2400), ("season", 1000)]
+        assert asyncio.run(_schema_snapshot(database_url)) == first_snapshot
+        command.upgrade(config, "head")
+        assert asyncio.run(_schema_snapshot(database_url)) == first_snapshot
+        command.check(config)
     finally:
         get_settings.cache_clear()

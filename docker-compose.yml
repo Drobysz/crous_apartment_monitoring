@@ -24,8 +24,10 @@ services:
 
   migrate:
     build: .
-    env_file: .env
+    env_file:
+      - .env
     command: alembic upgrade head
+    restart: "no"
     depends_on:
       postgres: {condition: service_healthy}
     networks: [crous_internal]
@@ -52,6 +54,8 @@ services:
 
   admin_panel:
     build: .
+    env_file:
+      - .env
     command: uvicorn app.admin_main:app --host 0.0.0.0 --port 8000
     expose: ["8000"]
     depends_on:

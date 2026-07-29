@@ -1,6 +1,6 @@
-"""Create the complete CROUS monitoring schema.
+"""Create the initial CROUS monitoring schema.
 
-Revision ID: 20260729_01_baseline
+Revision ID: 20260729_01_base
 Revises:
 Create Date: 2026-07-29
 """
@@ -9,7 +9,7 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "20260729_01_baseline"
+revision = "20260729_01_base"
 down_revision = None
 branch_labels = None
 depends_on = None

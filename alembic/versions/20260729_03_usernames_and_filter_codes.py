@@ -1,7 +1,7 @@
 """Persist Telegram usernames and normalize legacy accommodation-format codes.
 
-Revision ID: 20260729_03_usernames_and_filter_codes
-Revises: 20260729_02_admin_domain
+Revision ID: 20260729_03_filters
+Revises: 20260729_02_admin
 Create Date: 2026-07-29
 """
 
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision = "20260729_03_usernames_and_filter_codes"
-down_revision = "20260729_02_admin_domain"
+revision = "20260729_03_filters"
+down_revision = "20260729_02_admin"
 branch_labels = None
 depends_on = None
 
