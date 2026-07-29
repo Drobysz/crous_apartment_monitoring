@@ -10,6 +10,7 @@ def main_menu(
     translator: Translator = i18n,
     *,
     show_test_reset: bool = False,
+    monitoring_enabled: bool = False,
 ) -> InlineKeyboardMarkup:
     def button(key: str, action: str) -> InlineKeyboardButton:
         return InlineKeyboardButton(text=translator.text(language, key), callback_data=NavCallback(action=action, version=version).pack())
@@ -17,7 +18,8 @@ def main_menu(
         [button("set-location", "location"), button("view-available", "list")],
         [button("filters", "filters"), button("subscription", "subscription")],
         [button("check-now", "check-now")],
-        [button("monitoring-settings", "monitoring")], [button("language", "language")],
+        [button("disable-monitoring" if monitoring_enabled else "enable-monitoring", "monitor-toggle")],
+        [button("language", "language")],
     ]
     if show_test_reset:
         rows.append([button("test-reset-subscription", "test-reset")])

@@ -363,6 +363,19 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                             [InlineKeyboardButton(text=i18n.text(user.language, "back"), callback_data=NavCallback(action="subscription", version=version).pack())],
                         ])
                         await nav.render_text_screen(callback.bot, session, user, i18n.text(user.language, "payment-page"), keyboard, "payment")
+            elif action == "monitor-toggle":
+                search = await latest_search(session, user)
+                if search is None:
+                    await callback.message.answer(i18n.text(user.language, "no-search"))
+                else:
+                    search.is_active = not search.is_active
+                    await main_screen(
+                        callback.bot,
+                        session,
+                        user,
+                        nav,
+                        notice=i18n.text(user.language, "resumed" if search.is_active else "paused"),
+                    )
             elif action == "monitoring":
                 await state.clear(); await render_monitoring(callback.bot, session, user)
             elif action == "monitor-disable-confirm":
@@ -674,7 +687,7 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             if result == "busy":
                 await callback.message.answer(i18n.text(user.language, "list-loading"))
             elif result == "unchanged":
-                await callback.answer(i18n.text(user.language, "list-current"), show_alert=False)
+                await callback.message.answer(i18n.text(user.language, "list-current"))
         except (SnapshotDeliveryError, CrousUnavailable, httpx.HTTPError) as error:
             logger.warning("listing_request_failed", correlation_id=correlation_id, telegram_user_id=user.telegram_user_id, search_id=search.id, reason=str(error))
             await callback.message.answer(i18n.text(user.language, "error"))

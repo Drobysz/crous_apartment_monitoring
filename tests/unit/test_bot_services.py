@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app.bot.keyboards import main_menu
 from app.bot.navigation.manager import NavigationMessageManager
 from app.bot.services import available_listing_count, format_last_check
+from app.core.i18n import i18n
 from app.db.models import Base, Listing, Search, SearchListing, User
 
 
@@ -81,9 +82,21 @@ def test_last_check_is_rendered_in_the_configured_paris_timezone() -> None:
 def test_main_menu_has_no_per_user_monitoring_interval() -> None:
     actions = [button.callback_data for row in main_menu("ru", 1).inline_keyboard for button in row]
     assert all(action is None or "interval" not in action for action in actions)
-    assert {"location", "list", "filters", "subscription", "check-now", "monitoring", "language"} <= {
+    assert {"location", "list", "filters", "subscription", "check-now", "monitor-toggle", "language"} <= {
         action.split(":")[1] for action in actions if action
     }
+
+
+def test_localized_escaped_newlines_render_as_real_line_breaks() -> None:
+    text = i18n.text("en", "plan-detail", plan="Season", price="€10", validity="July to October")
+    assert "\\n" not in text
+    assert "\n" in text
+
+
+def test_main_menu_toggles_monitoring_without_opening_a_settings_screen() -> None:
+    callbacks = {button.callback_data for row in main_menu("en", 4, monitoring_enabled=True).inline_keyboard for button in row}
+    assert any(callback and "monitor-toggle" in callback for callback in callbacks)
+    assert not any(callback and ":monitoring:" in callback for callback in callbacks)
 
 
 def test_test_subscription_reset_button_is_opt_in() -> None:

@@ -30,7 +30,7 @@ class Translator:
         template = self.catalogs.get(language, self.catalogs["en"]).get(key)
         if template is None:
             raise KeyError(f"Missing i18n key: {key}")
-        return template.format(**variables)
+        return template.replace("\\n", "\n").format(**variables)
 
 
 i18n = Translator()

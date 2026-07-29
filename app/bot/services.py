@@ -109,6 +109,7 @@ async def main_screen(
     force_new: bool = False,
 ) -> None:
     text = await main_screen_text(session, user, notice=notice)
+    search = await latest_search(session, user)
     version = user.active_navigation_version + 1
     await nav.render_text_screen(
         bot,
@@ -119,6 +120,7 @@ async def main_screen(
             user.language,
             version,
             show_test_reset=get_settings().is_developer(user.telegram_user_id),
+            monitoring_enabled=bool(search and search.is_active),
         ),
         "main",
         force_new=force_new,
@@ -134,6 +136,7 @@ async def refresh_visible_main_screen(bot: Bot, session: AsyncSession, user: Use
     ):
         return
     try:
+        search = await latest_search(session, user)
         await bot.edit_message_text(
             await main_screen_text(session, user),
             chat_id=user.active_navigation_chat_id,
@@ -142,6 +145,7 @@ async def refresh_visible_main_screen(bot: Bot, session: AsyncSession, user: Use
                 user.language,
                 user.active_navigation_version,
                 show_test_reset=get_settings().is_developer(user.telegram_user_id),
+                monitoring_enabled=bool(search and search.is_active),
             ),
         )
     except TelegramBadRequest:
