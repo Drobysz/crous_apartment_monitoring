@@ -1,0 +1,6 @@
+:root { color: #1c1917; background: #faf8f5; font-family: ui-sans-serif, system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { max-width: 720px; margin: 0 auto; padding: 48px 24px; }
+h1 { margin: 0 0 16px; font-size: 28px; line-height: 1.2; }
+p { margin: 0; color: #57534e; font-size: 16px; line-height: 1.6; }

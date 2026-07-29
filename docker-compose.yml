@@ -11,6 +11,8 @@ services:
       timeout: 3s
       retries: 20
     volumes: [postgres_data:/var/lib/postgresql/data]
+    networks: [crous_internal]
+
   redis:
     image: redis:7.4.9-alpine3.21
     healthcheck:
@@ -18,15 +20,37 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+    networks: [crous_internal]
+
   app:
     build: .
     env_file: .env
-    # command: uvicorn app.main:app --host 0.0.0.0 --port 8000
-    command: python -m app.bot.runner
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    expose: ["8000"]
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
-    ports: ["8000:8000"]
+    networks: [crous_internal]
+
+  api:
+    build: .
+    env_file: .env
+    command: uvicorn app.api_main:app --host 0.0.0.0 --port 8000
+    expose: ["8000"]
+    networks: [crous_internal]
+
+  admin_panel:
+    build: .
+    command: uvicorn app.admin_main:app --host 0.0.0.0 --port 8000
+    expose: ["8000"]
+    networks: [crous_internal]
+
+  next_app:
+    build: ./web_app
+    env_file: .env
+    expose: ["3000"]
+    networks: [crous_internal]
+
   worker:
     build: .
     env_file: .env
@@ -34,5 +58,26 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+    networks: [crous_internal]
+
+  proxy:
+    image: nginx:alpine
+    restart: unless-stopped
+    depends_on:
+      app: {condition: service_started}
+      api: {condition: service_started}
+      admin_panel: {condition: service_started}
+      next_app: {condition: service_started}
+    volumes:
+      - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    expose: ["80"]
+    ports:
+      - "${NGINX_EXTERNAL_PORT:-8080}:80"
+    networks: [crous_internal]
+
 volumes:
   postgres_data:
+
+networks:
+  crous_internal:
+    driver: bridge
