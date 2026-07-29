@@ -11,6 +11,8 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from app.bot.handlers.main import build_router
+from app.bot.navigation.manager import NavigationMessageManager
+from app.bot.services import main_screen, refresh_visible_main_screen
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.crous.client import CrousClient
@@ -74,18 +76,28 @@ def payment_page(title: str, message: str, *, successful: bool) -> HTMLResponse:
 
 
 async def notify_payment_confirmation(payment: ProcessedPayment | None) -> None:
-    if payment is None or payment.duplicate or bot is None:
+    if payment is None or bot is None:
         return
     from app.core.i18n import i18n
 
-    await bot.send_message(
-        payment.user.telegram_chat_id,
-        i18n.text(
-            payment.user.language,
-            "payment-confirmed",
-            plan=i18n.text(payment.user.language, f"plan-{payment.plan.code}"),
-        ),
-    )
+    if not payment.duplicate:
+        await bot.send_message(
+            payment.user.telegram_chat_id,
+            i18n.text(
+                payment.user.language,
+                "payment-confirmed",
+                plan=i18n.text(payment.user.language, f"plan-{payment.plan.code}"),
+            ),
+        )
+
+    async with SessionLocal() as session:
+        user = await session.get(User, payment.user.id)
+        if user is not None:
+            if user.active_navigation_screen == "main":
+                await refresh_visible_main_screen(bot, session, user)
+            else:
+                await main_screen(bot, session, user, NavigationMessageManager())
+            await session.commit()
 
 
 @app.get("/healthz")

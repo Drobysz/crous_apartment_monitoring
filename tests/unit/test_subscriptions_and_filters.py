@@ -21,6 +21,7 @@ from app.searches.filters import (
     parse_surface_range,
 )
 from app.subscriptions.service import (
+    activate_subscription,
     activate_trial,
     entitlement_dates,
     get_effective_subscription,
@@ -126,6 +127,29 @@ async def test_trial_is_available_once_and_falls_back_to_free() -> None:
         assert (await get_effective_subscription(session, user, datetime(2026, 7, 10, 1, tzinfo=UTC))).plan.code == "trial"
         assert (await get_effective_subscription(session, user, datetime(2026, 7, 11, tzinfo=UTC))).plan.code == "free"
         assert await plan_by_code(session, "season") is not None
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_an_in_season_purchase_supersedes_an_active_trial() -> None:
+    engine = create_async_engine("sqlite+aiosqlite://")
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    async with factory() as session:
+        user = User(telegram_user_id=14, telegram_chat_id=14, language="en")
+        trial_plan = SubscriptionPlan(code="trial", name="Trial", price_cents=0, is_active=False)
+        season_plan = SubscriptionPlan(code="season", name="Season", price_cents=1000)
+        session.add_all((user, trial_plan, season_plan))
+        await session.flush()
+        trial_started = datetime(2026, 7, 29, 20, tzinfo=UTC)
+        await activate_subscription(session, user, trial_plan, source="trial", now=trial_started)
+        purchased_at = datetime(2026, 7, 30, 0, 30, tzinfo=UTC)
+        await activate_subscription(session, user, season_plan, source="stripe", now=purchased_at)
+
+        assert (await get_effective_subscription(session, user, purchased_at)).plan.code == "season"
+        statuses = [subscription.status for subscription in (await session.scalars(select(UserSubscription))).all()]
+        assert statuses == ["superseded", "active"]
     await engine.dispose()
 
 

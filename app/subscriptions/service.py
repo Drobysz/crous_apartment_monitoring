@@ -167,6 +167,17 @@ async def activate_subscription(
     starts_at, ends_at = entitlement_dates(plan, now)
     if plan.id is None:
         raise ValueError("Only paid plans can be persisted as entitlements")
+    if plan.code != TRIAL and starts_at <= now:
+        current_entitlements = await session.scalars(
+            select(UserSubscription).where(
+                UserSubscription.user_id == user.id,
+                UserSubscription.status == "active",
+                UserSubscription.starts_at <= now,
+                UserSubscription.ends_at.is_(None) | (UserSubscription.ends_at > now),
+            )
+        )
+        for current_entitlement in current_entitlements:
+            current_entitlement.status = "superseded"
     entitlement = UserSubscription(
         user_id=user.id,
         subscription_plan_id=plan.id,
