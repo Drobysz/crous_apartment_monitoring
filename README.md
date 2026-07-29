@@ -6,7 +6,7 @@ The bot offers Free, one-time Trial, Season, and optional Lifetime access. Paid 
 
 ## Requirements and configuration
 
-Python 3.12, PostgreSQL 16, Redis 7, and a Telegram bot token are required. Copy `.env.example` to `.env`, set `TELEGRAM_BOT_TOKEN`, and use a production PostgreSQL `DATABASE_URL` and Redis `REDIS_URL`. Secrets are never committed or logged.
+Python 3.12 or 3.13, PostgreSQL 16, Redis 7, and a Telegram bot token are required. The project uses uv 0.12.x; the Docker images provide Python 3.13. Copy `.env.example` to `.env`, set `TELEGRAM_BOT_TOKEN`, and use a production PostgreSQL `DATABASE_URL` and Redis `REDIS_URL`. Secrets are never committed or logged.
 
 ### Subscription configuration
 

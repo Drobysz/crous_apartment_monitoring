@@ -6,11 +6,11 @@ build-backend = "hatchling.build"
 name = "crous-logement-bot"
 version = "0.1.0"
 description = "Multilingual CROUS accommodation monitoring Telegram bot"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.12,<3.14"
 dependencies = [
   "aiogram>=3.30,<4",
-  "fastapi>=0.140,<0.141",
-  "uvicorn[standard]>=0.51,<0.52",
+  "fastapi>=0.140.13,<0.141",
+  "uvicorn[standard]>=0.52,<0.53",
   "sqlalchemy[asyncio]>=2.0.51,<2.1",
   "asyncpg>=0.31,<0.32",
   "alembic>=1.18.5,<2",
@@ -38,7 +38,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py313"
 line-length = 100
 
 [tool.ruff.lint]
@@ -46,10 +46,10 @@ select = ["E", "F", "I", "UP", "B", "ASYNC"]
 ignore = ["E501", "E701", "E702"]
 
 [tool.mypy]
-python_version = "3.12"
+python_version = "3.13"
 strict = true
 exclude = ["alembic"]
 disable_error_code = ["arg-type", "union-attr", "no-any-return", "no-untyped-def"]
 
 [tool.uv]
-required-version = ">=0.11.27,<0.12"
+required-version = ">=0.12,<0.13"

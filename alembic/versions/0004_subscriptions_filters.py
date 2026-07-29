@@ -5,6 +5,7 @@ Revises: 0003_snapshot_display_groups
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "0004_subscriptions_filters"
