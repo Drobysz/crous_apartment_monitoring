@@ -42,6 +42,7 @@ class User(Timestamped, Base):
     active_navigation_screen: Mapped[str | None] = mapped_column(String(64))
     active_navigation_version: Mapped[int] = mapped_column(Integer, default=0)
     current_fsm_state: Mapped[str | None] = mapped_column(String(64))
+    trial_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Search(Timestamped, Base):
@@ -66,6 +67,47 @@ class Search(Timestamped, Base):
     snapshot_fingerprint: Mapped[str | None] = mapped_column(String(64))
     consecutive_errors: Mapped[int] = mapped_column(default=0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    price_min_cents: Mapped[int | None]
+    price_max_cents: Mapped[int | None]
+    surface_min_m2: Mapped[float | None]
+    surface_max_m2: Mapped[float | None]
+    accommodation_format: Mapped[str | None] = mapped_column(String(16))
+
+
+class SubscriptionPlan(Timestamped, Base):
+    __tablename__ = "subscription_plans"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    code: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(64))
+    price_cents: Mapped[int]
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+
+
+class Purchase(Timestamped, Base):
+    __tablename__ = "purchases"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    subscription_plan_id: Mapped[int] = mapped_column(ForeignKey("subscription_plans.id"), index=True)
+    stripe_checkout_session_id: Mapped[str] = mapped_column(String(255), unique=True)
+    stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), index=True)
+    stripe_event_id: Mapped[str | None] = mapped_column(String(255), unique=True)
+    amount_cents: Mapped[int | None]
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    purchased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UserSubscription(Timestamped, Base):
+    __tablename__ = "user_subscriptions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    subscription_plan_id: Mapped[int] = mapped_column(ForeignKey("subscription_plans.id"), index=True)
+    purchase_id: Mapped[int | None] = mapped_column(ForeignKey("purchases.id", ondelete="SET NULL"), unique=True)
+    starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    activation_source: Mapped[str] = mapped_column(String(16))
+    expiration_notified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class SearchDisplayGroup(Base):

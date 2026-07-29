@@ -1,0 +1,12 @@
+main-title = Моніторинг житла CROUS
+back = ← Назад
+language = 🌐 Мова
+subscription = 💳 Підписка
+filters = ⚙️ Фільтри
+check-now = ⚡ Перевірити зараз
+monitoring-settings = 🔔 Налаштування моніторингу
+enable-monitoring = Увімкнути моніторинг
+disable-monitoring = Вимкнути моніторинг
+view-available = 🏠 Поточні помешкання
+set-location = 📍 Вказати район пошуку
+payment-confirmed = Оплату підтверджено. Доступ {plan} активовано.

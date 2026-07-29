@@ -81,7 +81,20 @@ def test_last_check_is_rendered_in_the_configured_paris_timezone() -> None:
 def test_main_menu_has_no_per_user_monitoring_interval() -> None:
     actions = [button.callback_data for row in main_menu("ru", 1).inline_keyboard for button in row]
     assert all(action is None or "interval" not in action for action in actions)
-    assert len(actions) == 3
+    assert {"location", "list", "filters", "subscription", "check-now", "monitoring", "language"} <= {
+        action.split(":")[1] for action in actions if action
+    }
+
+
+def test_test_subscription_reset_button_is_opt_in() -> None:
+    regular = [button.callback_data for row in main_menu("en", 1).inline_keyboard for button in row]
+    developer = [
+        button.callback_data
+        for row in main_menu("en", 1, show_test_reset=True).inline_keyboard
+        for button in row
+    ]
+    assert not any(action and ":test-reset:" in action for action in regular)
+    assert any(action and ":test-reset:" in action for action in developer)
 
 
 @pytest.mark.asyncio

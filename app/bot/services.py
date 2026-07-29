@@ -13,6 +13,7 @@ from app.bot.navigation.manager import NavigationMessageManager
 from app.core.config import get_settings
 from app.core.i18n import i18n
 from app.db.models import Search, SearchListing, User
+from app.subscriptions.service import get_effective_subscription
 
 
 async def get_or_create_user(session: AsyncSession, telegram_user_id: int, chat_id: int, telegram_language_code: str | None) -> User:
@@ -63,6 +64,7 @@ async def main_screen_text(session: AsyncSession, user: User, *, notice: str | N
     last_check = format_last_check(search.last_success_at if search else None)
     last_change = format_last_check(search.last_changed_at if search else None)
     enabled = bool(search and search.is_active)
+    effective = await get_effective_subscription(session, user)
     available_count = await available_listing_count(session, search)
     parts = [i18n.text(language, "main-title")]
     if notice:
@@ -75,6 +77,7 @@ async def main_screen_text(session: AsyncSession, user: User, *, notice: str | N
                 "monitoring",
                 value=i18n.text(language, "enabled" if enabled else "disabled"),
             ),
+            i18n.text(language, "current-plan", value=i18n.text(language, f"plan-{effective.plan.code}")),
             i18n.text(language, "available-count", count=available_count),
             i18n.text(language, "last-check", value=last_check),
             i18n.text(language, "last-change", value=last_change),
@@ -99,7 +102,11 @@ async def main_screen(
         session,
         user,
         text,
-        main_menu(user.language, version),
+        main_menu(
+            user.language,
+            version,
+            show_test_reset=get_settings().is_developer(user.telegram_user_id),
+        ),
         "main",
         force_new=force_new,
     )
@@ -118,7 +125,11 @@ async def refresh_visible_main_screen(bot: Bot, session: AsyncSession, user: Use
             await main_screen_text(session, user),
             chat_id=user.active_navigation_chat_id,
             message_id=user.active_navigation_message_id,
-            reply_markup=main_menu(user.language, user.active_navigation_version),
+            reply_markup=main_menu(
+                user.language,
+                user.active_navigation_version,
+                show_test_reset=get_settings().is_developer(user.telegram_user_id),
+            ),
         )
     except TelegramBadRequest:
         # The user may have deleted the navigation message. The next command

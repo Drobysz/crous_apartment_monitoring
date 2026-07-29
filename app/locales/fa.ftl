@@ -1,0 +1,12 @@
+main-title = پایش اقامتگاه‌های CROUS
+back = ← بازگشت
+language = 🌐 زبان
+subscription = 💳 اشتراک
+filters = ⚙️ فیلترها
+check-now = ⚡ بررسی فوری
+monitoring-settings = 🔔 تنظیمات پایش
+enable-monitoring = فعال‌کردن پایش
+disable-monitoring = غیرفعال‌کردن پایش
+view-available = 🏠 اقامتگاه‌های موجود
+set-location = 📍 تعیین محدودهٔ جستجو
+payment-confirmed = پرداخت تأیید شد. دسترسی {plan} شما فعال است.

@@ -6,3 +6,8 @@ class LocationFlow(StatesGroup):
     geolocation = State()
     place_selection = State()
     radius_selection = State()
+
+
+class FilterFlow(StatesGroup):
+    price_input = State()
+    surface_input = State()

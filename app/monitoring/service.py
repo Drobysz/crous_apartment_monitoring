@@ -15,7 +15,9 @@ from app.core.i18n import i18n
 from app.crous.client import CrousClient
 from app.crous.models import Bounds
 from app.db.models import Search, SearchDisplayGroup, SearchDisplayMessage, User
+from app.images.downloader import SafeImageDownloader
 from app.notifications.service import apply_snapshot
+from app.searches.filters import listing_matches_filters
 from app.searches.service import validate_bounds
 
 from .snapshot import canonical_snapshot
@@ -98,7 +100,8 @@ async def synchronize_search(
         bounds = validate_bounds(Bounds(search.bounds_west, search.bounds_north, search.bounds_east, search.bounds_south))
         logger.info("search_sync_fetch_started", correlation_id=correlation_id, search_id=search.id, user_id=user.telegram_user_id)
         raw_items = await crous.search(bounds, correlation_id=correlation_id)
-        items, fingerprint = canonical_snapshot(raw_items)
+        filtered_items = [item for item in raw_items if listing_matches_filters(item, search)]
+        items, fingerprint = canonical_snapshot(filtered_items)
         logger.info("search_sync_fetch_completed", correlation_id=correlation_id, search_id=search.id, raw_count=len(raw_items), listing_count=len(items), fingerprint=fingerprint)
 
         await recover_incomplete_groups(bot, session, search.id)
@@ -123,8 +126,14 @@ async def synchronize_search(
 
         try:
             if items:
+                crous_settings = getattr(crous, "settings", None)
+                downloader = (
+                    SafeImageDownloader({str(crous_settings.crous_base_url.host)}, crous_settings.max_image_bytes)
+                    if crous_settings is not None
+                    else None
+                )
                 for item in items:
-                    message_id = await send_accommodation_card(bot, user.telegram_chat_id, item, user.language, now)
+                    message_id = await send_accommodation_card(bot, user.telegram_chat_id, item, user.language, now, downloader=downloader)
                     session.add(SearchDisplayMessage(display_group_id=pending.id, telegram_message_id=message_id, message_kind="card"))
                     await session.commit()  # recoverable even if the process exits mid-group
                     logger.info("search_display_card_sent", correlation_id=correlation_id, search_id=search.id, message_id=message_id, external_id=item.external_id)

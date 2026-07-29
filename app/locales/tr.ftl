@@ -1,0 +1,12 @@
+main-title = CROUS konut izleme
+back = ← Geri
+language = 🌐 Dil
+subscription = 💳 Abonelik
+filters = ⚙️ Filtreler
+check-now = ⚡ Şimdi kontrol et
+monitoring-settings = 🔔 İzleme ayarları
+enable-monitoring = İzlemeyi etkinleştir
+disable-monitoring = İzlemeyi devre dışı bırak
+view-available = 🏠 Mevcut konutlar
+set-location = 📍 Arama alanını ayarla
+payment-confirmed = Ödeme onaylandı. {plan} erişiminiz etkin.

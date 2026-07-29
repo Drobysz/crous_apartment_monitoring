@@ -4,10 +4,24 @@ from app.bot.callbacks import NavCallback
 from app.core.i18n import Translator, i18n
 
 
-def main_menu(language: str, version: int, translator: Translator = i18n) -> InlineKeyboardMarkup:
+def main_menu(
+    language: str,
+    version: int,
+    translator: Translator = i18n,
+    *,
+    show_test_reset: bool = False,
+) -> InlineKeyboardMarkup:
     def button(key: str, action: str) -> InlineKeyboardButton:
         return InlineKeyboardButton(text=translator.text(language, key), callback_data=NavCallback(action=action, version=version).pack())
-    return InlineKeyboardMarkup(inline_keyboard=[[button("set-location", "location")], [button("view-available", "list")], [button("language", "language")]])
+    rows = [
+        [button("set-location", "location"), button("view-available", "list")],
+        [button("filters", "filters"), button("subscription", "subscription")],
+        [button("check-now", "check-now")],
+        [button("monitoring-settings", "monitoring")], [button("language", "language")],
+    ]
+    if show_test_reset:
+        rows.append([button("test-reset-subscription", "test-reset")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def back(language: str, version: int, action: str = "menu", translator: Translator = i18n) -> InlineKeyboardMarkup:
@@ -23,7 +37,7 @@ def location_menu(language: str, version: int, translator: Translator = i18n) ->
 
 
 def language_menu(language: str, version: int, translator: Translator = i18n) -> InlineKeyboardMarkup:
-    rows = [[InlineKeyboardButton(text=label, callback_data=NavCallback(action="lang", entity=index, version=version).pack())] for index, label in enumerate(("🇷🇺 Русский", "🇫🇷 Français", "🇸🇦 العربية"))]
+    rows = [[InlineKeyboardButton(text=label, callback_data=NavCallback(action="lang", entity=index, version=version).pack())] for index, label in enumerate(("🇬🇧 English", "🇷🇺 Русский", "🇺🇦 Українська", "🇹🇷 Türkçe", "🇮🇷 فارسی", "🇫🇷 Français", "🇸🇦 العربية"))]
     rows.append([InlineKeyboardButton(text=translator.text(language, "back"), callback_data=NavCallback(action="menu", version=version).pack())])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
