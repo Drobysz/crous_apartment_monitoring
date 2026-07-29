@@ -86,7 +86,7 @@ services:
       - ./infra/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
     expose: ["80"]
     ports:
-      - "${NGINX_EXTERNAL_PORT:-8080}:80"
+      - "80:80"
     networks: [crous_internal]
 
 volumes:
