@@ -5,3 +5,5 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 *.py[cod]
+web_app/.next/
+web_app/node_modules/
