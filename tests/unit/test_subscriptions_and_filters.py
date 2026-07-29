@@ -182,3 +182,45 @@ async def test_checkout_uses_database_price_data_without_a_predefined_product(mo
     assert parse_qs(requests[0].decode())["line_items[0][price_data][unit_amount]"] == ["1337"]
     assert "line_items[0][price]" not in parse_qs(requests[0].decode())
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_verified_checkout_session_activates_once_before_webhook_arrives() -> None:
+    engine = create_async_engine("sqlite+aiosqlite://")
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    async with factory() as session:
+        user = User(telegram_user_id=13, telegram_chat_id=13, language="en")
+        plan = SubscriptionPlan(code="season", name="Season", price_cents=1000)
+        session.add_all((user, plan))
+        await session.flush()
+        checkout = {
+            "id": "cs_test_verified",
+            "payment_status": "paid",
+            "amount_total": 1000,
+            "currency": "eur",
+            "client_reference_id": str(user.id),
+            "metadata": {
+                "internal_user_id": str(user.id),
+                "telegram_user_id": str(user.telegram_user_id),
+                "subscription_id": str(plan.id),
+                "plan_code": "season",
+            },
+        }
+        settings = Settings(stripe_secret_key="sk_test_example")
+        payment = await process_paid_checkout(session, checkout, settings)
+        assert payment is not None and not payment.duplicate
+        await session.flush()
+        duplicate = await process_paid_checkout(session, checkout, settings, event_id="evt_later")
+        assert duplicate is not None and duplicate.duplicate
+        assert len((await session.scalars(select(Purchase))).all()) == 1
+        assert len((await session.scalars(select(UserSubscription))).all()) == 1
+    await engine.dispose()
+
+
+def test_cancel_return_token_is_bound_to_the_checkout_user_and_plan() -> None:
+    settings = Settings(stripe_secret_key="sk_test_example")
+    token = stripe.payment_return_token(settings, 7, 3)
+    assert valid_payment_return_token(settings, 7, 3, token)
+    assert not valid_payment_return_token(settings, 8, 3, token)

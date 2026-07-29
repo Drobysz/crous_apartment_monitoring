@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from html import escape
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -13,9 +14,18 @@ from app.bot.handlers.main import build_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.crous.client import CrousClient
+from app.db.models import User
 from app.db.session import SessionLocal
 from app.geocoding.provider import PhotonProvider
-from app.payments.stripe import StripeError, process_checkout_completed, verify_webhook
+from app.payments.stripe import (
+    ProcessedPayment,
+    StripeError,
+    process_checkout_completed,
+    process_paid_checkout,
+    retrieve_checkout_session,
+    valid_payment_return_token,
+    verify_webhook,
+)
 
 settings = get_settings()
 bot: Bot | None = None
@@ -42,12 +52,39 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="CROUS Logement Bot", lifespan=lifespan)
 
 
-def payment_page(title: str, message: str) -> HTMLResponse:
+def payment_page(title: str, message: str, *, successful: bool) -> HTMLResponse:
     bot_url = str(settings.telegram_bot_url or "https://t.me/")
     return HTMLResponse(
-        f"<!doctype html><html lang=\"en\"><meta charset=\"utf-8\"><title>{title}</title>"
-        f"<body><main><h1>{title}</h1><p>{message}</p>"
-        f"<p><a href=\"{bot_url}\">Open the Telegram bot</a></p></main></body></html>"
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        f"<title>{escape(title)}</title><style>"
+        "*{box-sizing:border-box}html,body{min-height:100%;margin:0}body{display:grid;place-items:center;"
+        "background:#f5f5f7;color:#1d1d1f;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;"
+        "padding:24px}main{width:min(100%,460px);text-align:center;background:#fff;border:1px solid #d2d2d7;"
+        "border-radius:18px;padding:48px 36px;box-shadow:0 2px 8px rgb(0 0 0 / 8%)}"
+        ".mark{width:44px;height:44px;margin:0 auto 24px;border-radius:50%;display:grid;place-items:center;"
+        f"background:{'#e8f7ed' if successful else '#fff1f0'};color:{'#1d7a3a' if successful else '#b42318'};font-size:24px}}"
+        "h1{font-size:28px;letter-spacing:-.4px;margin:0 0 14px}p{font-size:17px;line-height:1.45;margin:0 0 30px;"
+        "color:#424245}a{display:inline-block;background:#0071e3;color:#fff;text-decoration:none;border-radius:980px;"
+        "padding:12px 20px;font-size:16px;font-weight:600}a:hover{background:#0077ed}</style></head>"
+        f"<body><main><div class=\"mark\">{'✓' if successful else '×'}</div><h1>{escape(title)}</h1>"
+        f"<p>{escape(message)}</p><a href=\"{escape(bot_url, quote=True)}\">Return to Telegram</a>"
+        "</main></body></html>"
+    )
+
+
+async def notify_payment_confirmation(payment: ProcessedPayment | None) -> None:
+    if payment is None or payment.duplicate or bot is None:
+        return
+    from app.core.i18n import i18n
+
+    await bot.send_message(
+        payment.user.telegram_chat_id,
+        i18n.text(
+            payment.user.language,
+            "payment-confirmed",
+            plan=i18n.text(payment.user.language, f"plan-{payment.plan.code}"),
+        ),
     )
 
 
@@ -61,13 +98,39 @@ async def healthz() -> dict[str, str]:
 
 
 @app.get(settings.payment_success_path)
-async def payment_success() -> HTMLResponse:
-    return payment_page("Payment received", "Your access is activated only after Stripe verifies the payment.")
+async def payment_success(session_id: str | None = None) -> HTMLResponse:
+    if not session_id:
+        return payment_page("Payment could not be verified", "Return to Telegram and try the payment again.", successful=False)
+    try:
+        checkout = await retrieve_checkout_session(session_id, settings)
+        async with SessionLocal() as session:
+            payment = await process_paid_checkout(session, checkout, settings)
+            await session.commit()
+        if payment is None:
+            return payment_page("Payment is being verified", "Stripe is still confirming the payment. You can close this page and return to Telegram.", successful=False)
+        await notify_payment_confirmation(payment)
+    except StripeError:
+        return payment_page("Payment is being verified", "Stripe is still confirming the payment. You can close this page and return to Telegram.", successful=False)
+    return payment_page("Payment completed", "Your subscription is active. You can close this page and return to the Telegram bot.", successful=True)
 
 
 @app.get(settings.payment_cancel_path)
-async def payment_cancel() -> HTMLResponse:
-    return payment_page("Payment cancelled", "No subscription was activated. You can return to the bot and try again.")
+async def payment_cancel(user_id: int | None = None, plan_id: int | None = None, token: str | None = None) -> HTMLResponse:
+    if user_id is not None and plan_id is not None and token:
+        try:
+            valid_return = valid_payment_return_token(settings, user_id, plan_id, token)
+        except StripeError:
+            valid_return = False
+    else:
+        valid_return = False
+    if valid_return and user_id is not None:
+        async with SessionLocal() as session:
+            user = await session.get(User, user_id)
+        if user and bot:
+            from app.core.i18n import i18n
+
+            await bot.send_message(user.telegram_chat_id, i18n.text(user.language, "payment-cancelled"))
+    return payment_page("Payment was not completed", "No subscription was activated. You can close this page and return to the Telegram bot.", successful=False)
 
 
 @app.post(settings.telegram_webhook_path)
@@ -83,7 +146,7 @@ async def telegram_webhook(update: dict[str, object], x_telegram_bot_api_secret_
 
 @app.post(settings.stripe_webhook_path)
 async def stripe_webhook(request: Request, stripe_signature: str | None = Header(default=None)) -> dict[str, bool]:
-    """Stripe is the sole payment activation authority; browser redirects do nothing."""
+    """Process Stripe's signed webhook as an idempotent payment-confirmation path."""
     if not settings.stripe_webhook_secret:
         raise HTTPException(503, "Stripe webhook is not configured")
     try:
@@ -94,12 +157,7 @@ async def stripe_webhook(request: Request, stripe_signature: str | None = Header
         async with SessionLocal() as session:
             payment = await process_checkout_completed(session, event, settings)
             await session.commit()
-        if payment and not payment.duplicate and bot:
-            from app.core.i18n import i18n
-            await bot.send_message(
-                payment.user.telegram_chat_id,
-                i18n.text(payment.user.language, "payment-confirmed", plan=i18n.text(payment.user.language, f"plan-{payment.plan.code}")),
-            )
+        await notify_payment_confirmation(payment)
     except StripeError as error:
         raise HTTPException(400, "Stripe payment could not be processed") from error
     return {"ok": True}

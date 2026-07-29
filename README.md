@@ -10,7 +10,7 @@ Python 3.12 or 3.13, PostgreSQL 16, Redis 7, and a Telegram bot token are requir
 
 ### Subscription configuration
 
-For Stripe Checkout, configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `PUBLIC_BASE_URL`. Checkout prices are always read from PostgreSQL (`subscription_plans.price_cents`) and submitted to Stripe as EUR `price_data`; Stripe Price IDs are not used. `PUBLIC_BASE_URL` provides the `/payments/success` and `/payments/cancel` return pages, neither of which activates access.
+For Stripe Checkout, configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, and `PUBLIC_BASE_URL`. Checkout prices are always read from PostgreSQL (`subscription_plans.price_cents`) and submitted to Stripe as EUR `price_data`; Stripe Price IDs are not used. The success return page retrieves the Checkout Session directly from Stripe and activates access only when its verified `payment_status` is `paid`; the signed webhook remains an idempotent confirmation path.
 
 The following product values are configurable without changing Telegram handlers:
 
@@ -52,7 +52,7 @@ uv run arq app.workers.tasks.WorkerSettings
 
 The API exposes `/healthz`, `/telegram/webhook`, `/stripe/webhook`, `/crous_bot_api/*`, `/panel/*`, `/web_app/*`, and payment return pages. Register the Stripe endpoint at `https://your-host/stripe/webhook` and subscribe to `checkout.session.completed`. Stripe must send its signing secret through the configured `STRIPE_WEBHOOK_SECRET`; invalid signatures and stale signed payloads are rejected.
 
-Do not expose the Stripe endpoint through a client application, and do not activate entitlements from the Stripe success redirect. The webhook validates server-generated metadata and the database price, records the event/session/payment identifiers, and sends the Telegram confirmation only after the transactional entitlement activation succeeds.
+Do not expose the Stripe endpoint through a client application. The success redirect contains only a Checkout Session ID; the backend retrieves that session from Stripe, validates the server-generated metadata and database price, and activates the entitlement transactionally only when Stripe reports it as paid. The signed webhook performs the same idempotent validation as a reliable fallback. Both return pages direct the user back to Telegram and notify the related chat.
 
 ## Docker Compose
 

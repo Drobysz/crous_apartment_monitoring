@@ -6,10 +6,10 @@ import json
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -35,6 +35,16 @@ def _secret(settings: Settings, name: str) -> str:
     return value.get_secret_value()
 
 
+def payment_return_token(settings: Settings, user_id: int, plan_id: int) -> str:
+    """Bind a cancellation return URL to its intended Telegram user."""
+    payload = f"cancel:{user_id}:{plan_id}".encode()
+    return hmac.new(_secret(settings, "stripe_secret_key").encode(), payload, hashlib.sha256).hexdigest()
+
+
+def valid_payment_return_token(settings: Settings, user_id: int, plan_id: int, token: str) -> bool:
+    return hmac.compare_digest(payment_return_token(settings, user_id, plan_id), token)
+
+
 async def create_checkout_session(
     session: AsyncSession, user: User, plan_code: str, settings: Settings | None = None
 ) -> str:
@@ -46,10 +56,17 @@ async def create_checkout_session(
     if not settings.public_base_url:
         raise StripeError("PUBLIC_BASE_URL is not configured")
     base_url = str(settings.public_base_url).rstrip("/")
+    cancel_query = urlencode(
+        {
+            "user_id": user.id,
+            "plan_id": plan.id,
+            "token": payment_return_token(settings, user.id, plan.id),
+        }
+    )
     payload = {
         "mode": "payment",
         "success_url": f"{base_url}{settings.payment_success_path}?session_id={{CHECKOUT_SESSION_ID}}",
-        "cancel_url": f"{base_url}{settings.payment_cancel_path}",
+        "cancel_url": f"{base_url}{settings.payment_cancel_path}?{cancel_query}",
         "client_reference_id": str(user.id),
         "line_items[0][price_data][currency]": "eur",
         "line_items[0][price_data][unit_amount]": str(plan.price_cents),
@@ -110,22 +127,43 @@ def _metadata(value: object) -> dict[str, str]:
     return {str(key): str(item) for key, item in value.items()} if isinstance(value, dict) else {}
 
 
-async def process_checkout_completed(
-    session: AsyncSession, event: dict[str, object], settings: Settings | None = None
-) -> ProcessedPayment | None:
-    """Activate only verified, paid Checkout events. Database uniqueness is the idempotency gate."""
+async def retrieve_checkout_session(session_id: str, settings: Settings | None = None) -> dict[str, object]:
+    """Fetch a Checkout Session from Stripe before trusting a browser return."""
     settings = settings or get_settings()
-    if event.get("type") != "checkout.session.completed":
-        return None
-    event_id = event.get("id")
-    data = event.get("data")
-    checkout = data.get("object") if isinstance(data, dict) else None
-    if not isinstance(event_id, str) or not isinstance(checkout, dict):
-        raise StripeError("Stripe event is missing identifiers")
+    if not session_id.startswith("cs_"):
+        raise StripeError("Invalid Stripe Checkout Session identifier")
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(20, connect=5)) as client:
+            response = await client.get(
+                f"https://api.stripe.com/v1/checkout/sessions/{quote(session_id, safe='')}",
+                headers={"Authorization": f"Bearer {_secret(settings, 'stripe_secret_key')}"},
+            )
+    except httpx.HTTPError as error:
+        raise StripeError("Stripe Checkout Session could not be verified") from error
+    if not response.is_success:
+        raise StripeError("Stripe Checkout Session could not be verified")
+    checkout = response.json()
+    if not isinstance(checkout, dict) or checkout.get("id") != session_id:
+        raise StripeError("Stripe returned an invalid Checkout Session")
+    return checkout
+
+
+async def process_paid_checkout(
+    session: AsyncSession,
+    checkout: dict[str, object],
+    settings: Settings | None = None,
+    *,
+    event_id: str | None = None,
+) -> ProcessedPayment | None:
+    """Activate a paid session verified by Stripe's signed webhook or API."""
+    settings = settings or get_settings()
     checkout_id = checkout.get("id")
     if not isinstance(checkout_id, str) or checkout.get("payment_status") != "paid":
         return None
-    existing = await session.scalar(select(Purchase).where((Purchase.stripe_event_id == event_id) | (Purchase.stripe_checkout_session_id == checkout_id)))
+    conditions = [Purchase.stripe_checkout_session_id == checkout_id]
+    if event_id is not None:
+        conditions.append(Purchase.stripe_event_id == event_id)
+    existing = await session.scalar(select(Purchase).where(or_(*conditions)))
     if existing:
         user = await session.get(User, existing.user_id)
         plan = await session.get(SubscriptionPlan, existing.subscription_plan_id)
@@ -156,9 +194,26 @@ async def process_checkout_completed(
         user_id=user.id, subscription_plan_id=plan.id, stripe_checkout_session_id=checkout_id,
         stripe_payment_intent_id=str(checkout["payment_intent"]) if checkout.get("payment_intent") else None,
         stripe_event_id=event_id, amount_cents=amount_cents,
-        status="paid", purchased_at=datetime.now(UTC), processed_at=datetime.now(UTC),
+        status="paid",
+        is_test=checkout.get("livemode") is False,
+        purchased_at=datetime.now(UTC),
+        processed_at=datetime.now(UTC),
     )
     session.add(purchase)
     await session.flush()
     await activate_subscription(session, user, plan, source="stripe", purchase=purchase)
     return ProcessedPayment(user, plan)
+
+
+async def process_checkout_completed(
+    session: AsyncSession, event: dict[str, object], settings: Settings | None = None
+) -> ProcessedPayment | None:
+    """Process the signed `checkout.session.completed` webhook event."""
+    if event.get("type") != "checkout.session.completed":
+        return None
+    event_id = event.get("id")
+    data = event.get("data")
+    checkout = data.get("object") if isinstance(data, dict) else None
+    if not isinstance(event_id, str) or not isinstance(checkout, dict):
+        raise StripeError("Stripe event is missing identifiers")
+    return await process_paid_checkout(session, checkout, settings, event_id=event_id)

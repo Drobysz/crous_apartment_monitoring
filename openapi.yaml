@@ -6,7 +6,8 @@ info:
     Operational API for the multilingual CROUS accommodation monitoring bot.
     Telegram and Stripe send signed server-to-server events to webhook endpoints;
     it is not a public client API. Subscription activation happens only after a
-    successfully verified Stripe event, never from a browser redirect.
+    paid Checkout Session is verified by Stripe's signed webhook or by a
+    server-side Stripe API retrieval from the success return page.
     External traffic reaches the Compose stack through an HTTP-only internal
     Nginx router; TLS remains the responsibility of the external proxy.
 servers:
@@ -106,11 +107,20 @@ paths:
   /payments/success:
     get:
       operationId: paymentSuccess
-      summary: Show the successful-payment return page
-      description: This page does not activate a subscription.
+      summary: Verify a Stripe Checkout Session and show the payment result
+      description: |
+        Stripe redirects here with `session_id`. The backend retrieves that
+        session from Stripe and activates the entitlement only when the verified
+        session is paid. Processing is idempotent with the Stripe webhook.
+      parameters:
+        - name: session_id
+          in: query
+          required: true
+          schema:
+            type: string
       responses:
         '200':
-          description: Minimal HTML payment-result page with a Telegram bot link.
+          description: Centered payment-result page with a Telegram bot link.
           content:
             text/html:
               schema:
@@ -118,7 +128,8 @@ paths:
   /payments/cancel:
     get:
       operationId: paymentCancel
-      summary: Show the cancelled-payment return page
+      summary: Show the cancelled-payment return page and notify the Telegram user
+      description: The signed return parameters identify the pending checkout user without exposing a payment secret.
       responses:
         '200':
           description: Minimal HTML payment-result page with a Telegram bot link.

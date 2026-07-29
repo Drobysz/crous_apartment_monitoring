@@ -17,9 +17,9 @@ The default season is 7 July through 31 October, configured with numeric month/d
 
 ## Payment safety and idempotency
 
-Stripe Checkout is the sole card-collection surface. The bot creates a Checkout Session with `price_data`: the EUR amount is read from the `subscription_plans.price_cents` PostgreSQL column for every checkout. No Stripe Price IDs are configured. Metadata includes the internal user ID, Telegram user ID, plan ID, and plan code. The success/cancellation URLs only return the customer to a web page.
+Stripe Checkout is the sole card-collection surface. The bot creates a Checkout Session with `price_data`: the EUR amount is read from the `subscription_plans.price_cents` PostgreSQL column for every checkout. No Stripe Price IDs are configured. Metadata includes the internal user ID, Telegram user ID, plan ID, and plan code. On the success return, the backend retrieves the session from Stripe with its secret key and activates access only if Stripe reports `payment_status=paid`. The cancellation URL is bound to the intended Telegram user with an HMAC token and sends that user a non-payment notification.
 
-`POST /stripe/webhook` verifies Stripe's timestamped HMAC signature. It processes only paid `checkout.session.completed` events, verifies that the metadata matches an existing user and configured plan, then writes the purchase and entitlement in one transaction. Unique Checkout Session and Stripe event IDs make replayed delivery harmless. See [openapi.yaml](openapi.yaml) for the full endpoint contract.
+`POST /stripe/webhook` verifies Stripe's timestamped HMAC signature. It processes only paid `checkout.session.completed` events, verifies that the metadata matches an existing user and configured plan, then writes the purchase and entitlement in one transaction. The success-return flow and webhook share the same idempotency gate, so a delayed webhook cannot create a second purchase or subscription. See [openapi.yaml](openapi.yaml) for the full endpoint contract.
 
 ## Operations
 
