@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import httpx
 import structlog
 from aiogram import Bot, Router
@@ -36,7 +38,12 @@ from app.geocoding.models import GeocodedPlace
 from app.monitoring.locks import SearchLock
 from app.monitoring.service import SnapshotDeliveryError, synchronize_search
 from app.payments.stripe import StripeError, create_checkout_session
-from app.searches.filters import FilterValidationError, parse_price_range, parse_surface_range
+from app.searches.filters import (
+    FilterValidationError,
+    normalized_format,
+    parse_price_range,
+    parse_surface_range,
+)
 from app.searches.service import (
     InvalidBounds,
     bounds_from_serialized,
@@ -75,7 +82,7 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
     async def user_for(message: Message | CallbackQuery, session: AsyncSession) -> User:
         source = message.from_user
         chat_id = message.message.chat.id if isinstance(message, CallbackQuery) and message.message else message.chat.id
-        return await get_or_create_user(session, source.id, chat_id, source.language_code)
+        return await get_or_create_user(session, source.id, chat_id, source.language_code, source.username)
 
     async def current(callback: CallbackQuery, data: NavCallback, user: User) -> bool:
         if not callback.message or not nav.is_current_callback(user, callback.message.chat.id, callback.message.message_id, data.version):
@@ -88,7 +95,24 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         await nav.render_text_screen(bot, session, user, i18n.text(user.language, "choose-location"), location_menu(user.language, version), "location")
 
     def money(value: int | None) -> str:
-        return "—" if value is None else f"€{value / 100:g}"
+        if value is None:
+            return "—"
+        euros, cents = divmod(value, 100)
+        return f"€{euros}" if cents == 0 else f"€{euros}.{cents:02d}"
+
+    def bounds(
+        language: str,
+        low: int | float | None,
+        high: int | float | None,
+        formatter: Callable[[int | float | None], str],
+    ) -> str:
+        if low is None and high is None:
+            return i18n.text(language, "not-set")
+        if low is None:
+            return f"≤ {formatter(high)}"
+        if high is None:
+            return f"≥ {formatter(low)}"
+        return f"{formatter(low)}–{formatter(high)}"
 
     async def render_filters(bot: Bot, session: AsyncSession, user: User) -> None:
         search = await latest_search(session, user)
@@ -103,9 +127,15 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             ])
             await nav.render_text_screen(bot, session, user, i18n.text(language, "filters-requires-premium"), keyboard, "filters-locked")
             return
-        price = i18n.text(language, "not-set") if search.price_min_cents is None else f"{money(search.price_min_cents)}–{money(search.price_max_cents)}"
-        surface = i18n.text(language, "not-set") if search.surface_min_m2 is None else f"{search.surface_min_m2:g}–{search.surface_max_m2:g} m²"
-        format_value = i18n.text(language, "not-set") if not search.accommodation_format else i18n.text(language, f"format-{search.accommodation_format}")
+        price = bounds(language, search.price_min_cents, search.price_max_cents, money)
+        surface = bounds(
+            language,
+            search.surface_min_m2,
+            search.surface_max_m2,
+            lambda value: f"{value:g} m²" if value is not None else "—",
+        )
+        format_code = normalized_format(search.accommodation_format)
+        format_value = i18n.text(language, "not-set") if not format_code else i18n.text(language, f"format-{format_code}")
         text = i18n.text(language, "filters-page", price=price, surface=surface, format=format_value)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=i18n.text(language, "filter-price", value=price), callback_data=NavCallback(action="filter-price", version=version).pack())],
@@ -275,7 +305,7 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             elif action == "filter-format":
                 version = user.active_navigation_version + 1
                 keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text=i18n.text(user.language, "format-individuel"), callback_data=NavCallback(action="format", entity=1, version=version).pack())],
+                    [InlineKeyboardButton(text=i18n.text(user.language, "format-individual"), callback_data=NavCallback(action="format", entity=1, version=version).pack())],
                     [InlineKeyboardButton(text=i18n.text(user.language, "format-colocation"), callback_data=NavCallback(action="format", entity=2, version=version).pack())],
                     [InlineKeyboardButton(text=i18n.text(user.language, "format-any"), callback_data=NavCallback(action="format", entity=0, version=version).pack())],
                     [InlineKeyboardButton(text=i18n.text(user.language, "back"), callback_data=NavCallback(action="filters", version=version).pack())],
@@ -284,9 +314,23 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             elif action == "format":
                 search = await latest_search(session, user)
                 if search and await can_use_advanced_filters(session, user):
-                    search.accommodation_format = (None, "individuel", "colocation")[callback_data.entity] if callback_data.entity < 3 else None
+                    search.accommodation_format = (None, "individual", "colocation")[callback_data.entity] if callback_data.entity < 3 else None
                 await render_filters(callback.bot, session, user)
             elif action == "filter-clear":
+                version = user.active_navigation_version + 1
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=i18n.text(user.language, "confirm"), callback_data=NavCallback(action="filter-clear-confirm", version=version).pack())],
+                    [InlineKeyboardButton(text=i18n.text(user.language, "cancel"), callback_data=NavCallback(action="filters", version=version).pack())],
+                ])
+                await nav.render_text_screen(
+                    callback.bot,
+                    session,
+                    user,
+                    i18n.text(user.language, "clear-filters-confirm"),
+                    keyboard,
+                    "filter-clear-confirm",
+                )
+            elif action == "filter-clear-confirm":
                 search = await latest_search(session, user)
                 if search and await can_use_advanced_filters(session, user):
                     search.price_min_cents = search.price_max_cents = None
@@ -468,14 +512,22 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             search = await latest_search(session, user)
             try:
                 if search is None:
-                    raise FilterValidationError("No search")
+                    await render_filters(message.bot, session, user)
+                    return
                 if message.text.strip().casefold() == "clear":
                     search.price_min_cents = search.price_max_cents = None
                 else:
                     search.price_min_cents, search.price_max_cents = parse_price_range(message.text)
-            except FilterValidationError:
+            except FilterValidationError as error:
                 version = user.active_navigation_version + 1
-                await nav.render_text_screen(message.bot, session, user, i18n.text(user.language, "range-invalid"), back(user.language, version, "filters"), "filter-price-input")
+                await nav.render_text_screen(
+                    message.bot,
+                    session,
+                    user,
+                    i18n.text(user.language, f"filter-error-{error.code}"),
+                    back(user.language, version, "filters"),
+                    "filter-price-input",
+                )
             else:
                 await state.clear()
                 await render_filters(message.bot, session, user)
@@ -490,14 +542,22 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             search = await latest_search(session, user)
             try:
                 if search is None:
-                    raise FilterValidationError("No search")
+                    await render_filters(message.bot, session, user)
+                    return
                 if message.text.strip().casefold() == "clear":
                     search.surface_min_m2 = search.surface_max_m2 = None
                 else:
                     search.surface_min_m2, search.surface_max_m2 = parse_surface_range(message.text)
-            except FilterValidationError:
+            except FilterValidationError as error:
                 version = user.active_navigation_version + 1
-                await nav.render_text_screen(message.bot, session, user, i18n.text(user.language, "range-invalid"), back(user.language, version, "filters"), "filter-surface-input")
+                await nav.render_text_screen(
+                    message.bot,
+                    session,
+                    user,
+                    i18n.text(user.language, f"filter-error-{error.code}"),
+                    back(user.language, version, "filters"),
+                    "filter-surface-input",
+                )
             else:
                 await state.clear()
                 await render_filters(message.bot, session, user)

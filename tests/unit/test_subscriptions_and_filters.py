@@ -2,14 +2,24 @@ from datetime import UTC, datetime
 from urllib.parse import parse_qs
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import Settings
 from app.crous.models import CrousListing
-from app.db.models import Base, Search, SubscriptionPlan, User
+from app.db.models import Base, Purchase, Search, SubscriptionPlan, User, UserSubscription
 from app.payments import stripe
-from app.payments.stripe import create_checkout_session
-from app.searches.filters import listing_matches_filters, parse_price_range, parse_surface_range
+from app.payments.stripe import (
+    create_checkout_session,
+    process_paid_checkout,
+    valid_payment_return_token,
+)
+from app.searches.filters import (
+    FilterValidationError,
+    listing_matches_filters,
+    parse_price_range,
+    parse_surface_range,
+)
 from app.subscriptions.service import (
     activate_trial,
     entitlement_dates,
@@ -30,6 +40,67 @@ def test_filter_ranges_and_missing_listing_data_policy() -> None:
     )
     assert listing_matches_filters(CrousListing("1", "https://example.test/1", "Studio", price_cents=40_000, surface_min=20, surface_max=20, occupancy_type="Individuel"), search)
     assert not listing_matches_filters(CrousListing("2", "https://example.test/2", "Unknown"), search)
+
+
+def test_filter_bounds_are_inclusive_and_support_a_single_bound() -> None:
+    assert parse_price_range("≥300,50") == (30_050, None)
+    assert parse_price_range("≤650.25") == (None, 65_025)
+    assert parse_surface_range("≥15,5") == (15.5, None)
+    assert parse_surface_range("max 35.25 m²") == (None, 35.25)
+    search = Search(
+        user_id=1,
+        location_display_name="Nancy",
+        center_latitude=48.69,
+        center_longitude=6.18,
+        bounds_west=6.1,
+        bounds_north=48.8,
+        bounds_east=6.3,
+        bounds_south=48.6,
+        price_min_cents=30_000,
+        price_max_cents=30_000,
+        surface_min_m2=20,
+        surface_max_m2=20,
+    )
+    assert listing_matches_filters(
+        CrousListing("boundary", "https://example.test/boundary", "Studio", price_cents=30_000, surface_min=20, surface_max=20),
+        search,
+    )
+
+
+@pytest.mark.parametrize(
+    ("value", "code"),
+    [
+        ("-1", "negative"),
+        ("650-300", "min-greater"),
+        ("300.001", "precision"),
+        ("invalid", "format"),
+    ],
+)
+def test_price_range_validation_reports_stable_localization_codes(value: str, code: str) -> None:
+    with pytest.raises(FilterValidationError) as error:
+        parse_price_range(value)
+    assert error.value.code == code
+
+
+def test_legacy_accommodation_format_remains_compatible() -> None:
+    search = Search(
+        user_id=1,
+        location_display_name="Nancy",
+        center_latitude=48.69,
+        center_longitude=6.18,
+        bounds_west=6.1,
+        bounds_north=48.8,
+        bounds_east=6.3,
+        bounds_south=48.6,
+        accommodation_format="individuel",
+    )
+    individual = CrousListing("individual", "https://example.test/individual", "Studio", occupancy_type="Individuel")
+    colocation = CrousListing("colocation", "https://example.test/colocation", "Room", occupancy_type="Colocation")
+    assert listing_matches_filters(individual, search)
+    assert not listing_matches_filters(colocation, search)
+    search.accommodation_format = "colocation"
+    assert not listing_matches_filters(individual, search)
+    assert listing_matches_filters(colocation, search)
 
 
 def test_season_purchase_after_end_targets_next_year() -> None:

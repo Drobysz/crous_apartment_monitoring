@@ -16,15 +16,28 @@ from app.db.models import Search, SearchListing, User
 from app.subscriptions.service import get_effective_subscription
 
 
-async def get_or_create_user(session: AsyncSession, telegram_user_id: int, chat_id: int, telegram_language_code: str | None) -> User:
+async def get_or_create_user(
+    session: AsyncSession,
+    telegram_user_id: int,
+    chat_id: int,
+    telegram_language_code: str | None,
+    telegram_username: str | None = None,
+) -> User:
     from app.core.i18n import detect_language
     user = await session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))
     if user is None:
-        user = User(telegram_user_id=telegram_user_id, telegram_chat_id=chat_id, telegram_language_code=telegram_language_code, language=detect_language(telegram_language_code))
+        user = User(
+            telegram_user_id=telegram_user_id,
+            telegram_chat_id=chat_id,
+            telegram_username=telegram_username.casefold() if telegram_username else None,
+            telegram_language_code=telegram_language_code,
+            language=detect_language(telegram_language_code),
+        )
         session.add(user)
         await session.flush()
     else:
         user.telegram_chat_id = chat_id
+        user.telegram_username = telegram_username.casefold() if telegram_username else None
     return user
 
 
