@@ -16,7 +16,19 @@ class Translator:
 
     def __init__(self) -> None:
         english = self._load("en")
-        self.catalogs = {lang: english | self._load(lang) for lang in SUPPORTED_LANGUAGES}
+        self.catalogs: dict[str, dict[str, str]] = {}
+        for language in SUPPORTED_LANGUAGES:
+            catalog = self._load(language)
+            missing = set(english) - set(catalog)
+            extra = set(catalog) - set(english)
+            if missing or extra:
+                details = []
+                if missing:
+                    details.append(f"missing {', '.join(sorted(missing))}")
+                if extra:
+                    details.append(f"unknown {', '.join(sorted(extra))}")
+                raise RuntimeError(f"{language} locale is incomplete: {'; '.join(details)}")
+            self.catalogs[language] = catalog
 
     def _load(self, language: str) -> dict[str, str]:
         result: dict[str, str] = {}
