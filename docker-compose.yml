@@ -22,6 +22,14 @@ services:
       retries: 20
     networks: [crous_internal]
 
+  migrate:
+    build: .
+    env_file: .env
+    command: alembic upgrade head
+    depends_on:
+      postgres: {condition: service_healthy}
+    networks: [crous_internal]
+
   app:
     build: .
     env_file: .env
@@ -30,6 +38,7 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     networks: [crous_internal]
 
   api:
@@ -37,12 +46,16 @@ services:
     env_file: .env
     command: uvicorn app.api_main:app --host 0.0.0.0 --port 8000
     expose: ["8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
     networks: [crous_internal]
 
   admin_panel:
     build: .
     command: uvicorn app.admin_main:app --host 0.0.0.0 --port 8000
     expose: ["8000"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
     networks: [crous_internal]
 
   next_app:
@@ -58,6 +71,7 @@ services:
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
+      migrate: {condition: service_completed_successfully}
     networks: [crous_internal]
 
   proxy:

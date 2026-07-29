@@ -59,8 +59,9 @@ Do not expose the Stripe endpoint through a client application, and do not activ
 ```bash
 cp .env.example .env
 docker compose up --build
-docker compose exec app alembic upgrade head
 ```
+
+The Compose `migrate` service applies the schema before the app, API, administration, and worker services start. For the explicit baseline and the safe adoption procedure for a pre-existing database, see [MIGRATIONS.md](MIGRATIONS.md).
 
 The Compose stack includes an internal HTTP-only Nginx router. It publishes `NGINX_EXTERNAL_PORT` (default `8080`) and forwards webhooks, payments, API, administration, and web-app paths to their internal services. It has no TLS, certificate, redirect, or domain configuration. Point the existing Nginx Proxy Manager at `http://SERVER_IP:8080`; it remains solely responsible for HTTPS and certificates.
 
