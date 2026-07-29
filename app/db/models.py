@@ -256,3 +256,13 @@ class AdminAudit(Base):
     target_id: Mapped[str | None] = mapped_column(String(64))
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class AdminNotificationChat(Timestamped, Base):
+    """A private notification-bot chat verified against an active admin username."""
+
+    __tablename__ = "admin_notification_chats"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    admin_id: Mapped[int] = mapped_column(ForeignKey("admins.id", ondelete="CASCADE"), unique=True, index=True)
+    telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+    telegram_chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)

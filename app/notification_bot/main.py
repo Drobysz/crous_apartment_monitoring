@@ -6,12 +6,13 @@ from aiogram import Bot, Dispatcher
 from fastapi import FastAPI, Header, HTTPException
 
 from app.core.config import get_settings
+from app.db.session import SessionLocal
 from app.notification_bot.handlers import build_router
 
 settings = get_settings()
 bot: Bot | None = None
 dispatcher = Dispatcher()
-dispatcher.include_router(build_router())
+dispatcher.include_router(build_router(SessionLocal))
 
 
 @asynccontextmanager

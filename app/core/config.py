@@ -14,7 +14,6 @@ class Settings(BaseSettings):
     public_base_url: HttpUrl = HttpUrl("http://localhost")
     webhook_secret: SecretStr | None = None
     notification_webhook_secret: SecretStr | None = None
-    admin_notification_chat_ids: str = ""
     api_prefix: str = "/crous_bot_api"
     web_app_prefix: str = "/web_app"
     admin_panel_prefix: str = "/panel"
@@ -98,11 +97,6 @@ class Settings(BaseSettings):
         return self.test_mode and telegram_user_id in {
             int(value) for value in self.developer_telegram_ids.split(",") if value.strip().isdigit()
         }
-
-    @property
-    def admin_notification_chat_id_set(self) -> set[int]:
-        return {int(value) for value in self.admin_notification_chat_ids.split(",") if value.strip().isdigit()}
-
 
 @lru_cache
 def get_settings() -> Settings:

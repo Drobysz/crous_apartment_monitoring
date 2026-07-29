@@ -38,4 +38,4 @@ app/
 web_app/               localized administration panel
 ```
 
-The existing ORM module remains the only Alembic metadata source. The notification bot has its own token, webhook secret, route, process, and handler router; it does not consume primary-bot updates.
+The existing ORM module remains the only Alembic metadata source. The notification bot has its own token, webhook secret, route, process, and handler router; it does not consume primary-bot updates. It registers a private chat only when the Telegram sender username matches an active administrator username, and operational delivery queries those registered active-admin chats only.

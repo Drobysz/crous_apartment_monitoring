@@ -5,6 +5,7 @@ import asyncio
 from aiogram import Bot, Dispatcher
 
 from app.core.config import get_settings
+from app.db.session import SessionLocal
 from app.notification_bot.handlers import build_router
 
 
@@ -14,7 +15,7 @@ async def run() -> None:
         raise RuntimeError("NOTIFICATION_BOT_TOKEN is not configured")
     bot = Bot(settings.notification_bot_token.get_secret_value())
     dispatcher = Dispatcher()
-    dispatcher.include_router(build_router())
+    dispatcher.include_router(build_router(SessionLocal))
     try:
         await dispatcher.start_polling(bot)
     finally:

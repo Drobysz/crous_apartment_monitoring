@@ -21,6 +21,7 @@ pytestmark = pytest.mark.integration
 
 EXPECTED_TABLES = {
     "admin_audits",
+    "admin_notification_chats",
     "admin_sessions",
     "admins",
     "alembic_version",
