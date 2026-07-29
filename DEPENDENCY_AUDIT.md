@@ -18,6 +18,10 @@ Audit date: 2026-07-26
   dependency set. The local project itself is correctly skipped because it is
   not published on PyPI.
 - No deprecated or unmaintained direct Python package was identified.
+- Stripe Checkout uses Stripe's HTTPS API through the existing `httpx` client;
+  no card-processing SDK, browser automation, or additional payment dependency is
+  introduced. Webhook verification uses Python standard-library HMAC and has
+  fixture-based coverage for entitlement behavior.
 
 ## Resolved direct packages
 
@@ -55,4 +59,7 @@ uv run --locked --extra dev mypy app
 uv run --locked --with pip-audit --extra dev pip-audit
 docker compose build --no-cache
 docker compose run --rm app alembic upgrade head
+docker compose config --quiet
+docker compose up -d app api admin_panel next_app proxy
+docker compose exec proxy nginx -t
 ```

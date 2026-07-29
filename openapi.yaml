@@ -4,7 +4,11 @@ info:
   version: 0.1.0
   description: |
     Operational API for the multilingual CROUS accommodation monitoring bot.
-    Telegram sends updates to the webhook endpoint; it is not a public client API.
+    Telegram and Stripe send signed server-to-server events to webhook endpoints;
+    it is not a public client API. Subscription activation happens only after a
+    successfully verified Stripe event, never from a browser redirect.
+    External traffic reaches the Compose stack through an HTTP-only internal
+    Nginx router; TLS remains the responsibility of the external proxy.
 servers:
   - url: https://{host}
     variables:
@@ -60,15 +64,126 @@ paths:
           description: Webhook mode is not configured.
           content:
             application/json:
+            schema:
+              $ref: '#/components/schemas/ErrorResponse'
+  /crous_bot_api/health:
+    get:
+      operationId: apiHealthz
+      summary: Check the namespaced internal REST API
+      responses:
+        '200':
+          description: The internal REST API is available.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /panel/{path}:
+    get:
+      operationId: panelRoute
+      summary: Same-origin administration-panel route
+      parameters:
+        - $ref: '#/components/parameters/PathTail'
+      responses:
+        '200':
+          description: Administration route response.
+          content:
+            text/html:
+              schema:
+                type: string
+  /web_app/{path}:
+    get:
+      operationId: webAppRoute
+      summary: Same-origin web-application route
+      parameters:
+        - $ref: '#/components/parameters/PathTail'
+      responses:
+        '200':
+          description: Web application route response.
+          content:
+            text/html:
+              schema:
+                type: string
+  /payments/success:
+    get:
+      operationId: paymentSuccess
+      summary: Show the successful-payment return page
+      description: This page does not activate a subscription.
+      responses:
+        '200':
+          description: Minimal HTML payment-result page with a Telegram bot link.
+          content:
+            text/html:
+              schema:
+                type: string
+  /payments/cancel:
+    get:
+      operationId: paymentCancel
+      summary: Show the cancelled-payment return page
+      responses:
+        '200':
+          description: Minimal HTML payment-result page with a Telegram bot link.
+          content:
+            text/html:
+              schema:
+                type: string
+  /stripe/webhook:
+    post:
+      operationId: stripeWebhook
+      summary: Receive a verified Stripe Checkout event
+      description: |
+        Stripe posts raw JSON with a `Stripe-Signature` header. The service
+        verifies the HMAC signature and timestamp using `STRIPE_WEBHOOK_SECRET`.
+        Only `checkout.session.completed` events with `payment_status=paid` are
+        processed. Checkout session and event IDs make processing idempotent.
+        Do not call this endpoint from a browser or provide card data to it.
+      parameters:
+        - $ref: '#/components/parameters/StripeSignature'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StripeEvent'
+      responses:
+        '200':
+          description: The event was accepted, ignored as unrelated, or was already processed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AcceptedResponse'
+        '400':
+          description: The signature, event payload, or entitlement metadata is invalid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Stripe webhook verification is not configured.
+          content:
+            application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 components:
   parameters:
+    PathTail:
+      name: path
+      in: path
+      required: true
+      schema:
+        type: string
     TelegramWebhookSecret:
       name: X-Telegram-Bot-Api-Secret-Token
       in: header
       required: true
       description: Value configured through `WEBHOOK_SECRET`.
+      schema:
+        type: string
+        minLength: 1
+    StripeSignature:
+      name: stripe-signature
+      in: header
+      required: true
+      description: Stripe's signed payload header. It is verified with `STRIPE_WEBHOOK_SECRET`.
       schema:
         type: string
         minLength: 1
@@ -111,6 +226,62 @@ components:
         callback_query:
           $ref: '#/components/schemas/TelegramCallbackQuery'
       additionalProperties: true
+    StripeEvent:
+      type: object
+      description: |
+        Stripe event envelope. The application supports `checkout.session.completed`.
+        The event and Checkout Session identifiers are stored as idempotency keys.
+      required: [id, type, data]
+      properties:
+        id:
+          type: string
+          example: evt_123
+        type:
+          type: string
+          example: checkout.session.completed
+        data:
+          type: object
+          required: [object]
+          properties:
+            object:
+              $ref: '#/components/schemas/StripeCheckoutSession'
+      additionalProperties: true
+    StripeCheckoutSession:
+      type: object
+      required: [id, payment_status, metadata]
+      properties:
+        id:
+          type: string
+          example: cs_test_123
+        payment_status:
+          type: string
+          const: paid
+        payment_intent:
+          type: [string, 'null']
+        amount_total:
+          type: integer
+          description: Amount in EUR cents.
+          example: 999
+        currency:
+          type: string
+          example: eur
+        client_reference_id:
+          type: [string, 'null']
+        metadata:
+          type: object
+          required: [telegram_user_id, internal_user_id, subscription_id, plan_code]
+          properties:
+            telegram_user_id:
+              type: string
+            internal_user_id:
+              type: string
+            subscription_id:
+              type: string
+            plan_code:
+              type: string
+              enum: [season, lifetime]
+          additionalProperties:
+            type: string
     TelegramUser:
       type: object
       required: [id, is_bot, first_name]
