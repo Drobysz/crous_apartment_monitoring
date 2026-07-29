@@ -97,3 +97,22 @@ docker compose exec proxy nginx -t
 - The worker expires Trial and Season entitlements, falls users back to Free, and sends a single expiration notice.
 - CROUS tool IDs are discovered through `/api/global/context`, because campaigns change by year.
 - Cards use the listing's primary image when available; a secure, bounded download fallback is used if Telegram cannot fetch it.
+
+## Administration and operations bots
+
+After applying migrations, create the first administration account interactively:
+
+```bash
+uv run python -m app.admin.cli create-superadmin --name "Operations lead" --username @gogona
+```
+
+For deployment automation, pass the password over standard input and explicitly opt into an existing-account update:
+
+```bash
+printf '%s\n' "$ADMIN_PASSWORD" | uv run python -m app.admin.cli create-superadmin \
+  --name "Operations lead" --username @gogona --password-stdin --update-existing
+```
+
+Set `ADMIN_SESSION_SECRET` to a long random value before enabling `/panel/`. The panel uses server-owned, rotating HttpOnly sessions; it exposes no raw bearer token to browser code. See [ADMIN_PANEL.md](ADMIN_PANEL.md) for its API, roles, and deployment boundaries, [FILTER_AUDIT.md](FILTER_AUDIT.md) for filter semantics, and [DESIGN_ACCESSIBILITY_REPORT.md](DESIGN_ACCESSIBILITY_REPORT.md) for the responsive and keyboard design review.
+
+`NOTIFICATION_BOT_TOKEN`, `NOTIFICATION_WEBHOOK_SECRET`, and `ADMIN_NOTIFICATION_CHAT_IDS` configure the independent operational notification bot. Its public webhook path is `/notification_bot/webhook`; it runs separately from the student-facing Telegram bot.

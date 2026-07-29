@@ -163,8 +163,178 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
+  /crous_bot_api/admin/auth/login:
+    post:
+      operationId: adminLogin
+      summary: Start an administrator session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AdminLoginRequest'
+      responses:
+        '200':
+          description: HttpOnly session cookies are set.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AdminProfileEnvelope'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '429': {$ref: '#/components/responses/RateLimited'}
+  /crous_bot_api/admin/auth/refresh:
+    post:
+      operationId: adminRefresh
+      summary: Rotate an administrator refresh session
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '200':
+          description: New HttpOnly session cookies are set.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminProfileEnvelope'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+  /crous_bot_api/admin/auth/logout:
+    post:
+      operationId: adminLogout
+      summary: Revoke the active administrator session
+      security: [{adminCookie: []}]
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      responses:
+        '204': {description: Session revoked and cookies cleared.}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+  /crous_bot_api/admin/me:
+    get:
+      operationId: getAdminProfile
+      summary: Read the current administrator profile
+      security: [{adminCookie: []}]
+      responses:
+        '200':
+          description: Current administrator profile.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminProfile'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /crous_bot_api/admin/dashboard:
+    get:
+      operationId: getAdminDashboard
+      summary: Read paid live revenue and operating statistics
+      security: [{adminCookie: []}]
+      parameters:
+        - name: period
+          in: query
+          schema: {type: string, enum: [week, month, year], default: month}
+      responses:
+        '200':
+          description: Current-period dashboard data.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminDashboard'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+  /crous_bot_api/admin/dashboard/recent-buyers:
+    get:
+      operationId: getRecentBuyers
+      summary: Read recent paid live purchases
+      security: [{adminCookie: []}]
+      responses:
+        '200':
+          description: Recent buyers, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/BuyerList'}
+  /crous_bot_api/admin/admins:
+    get:
+      operationId: listAdmins
+      summary: Search and paginate administrators
+      security: [{adminCookie: []}]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Search'
+      responses:
+        '200':
+          description: Administrator page.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminPage'}
+    post:
+      operationId: createAdmin
+      summary: Create an administrator as a superadmin
+      security: [{adminCookie: []}]
+      parameters:
+        - $ref: '#/components/parameters/CsrfToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AdminCreateRequest'}
+      responses:
+        '201':
+          description: Administrator created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AdminProfile'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/CsrfRejected'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /crous_bot_api/admin/paid-users:
+    get:
+      operationId: listPaidUsers
+      summary: Search and paginate users with an effective non-Free plan
+      security: [{adminCookie: []}]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Search'
+      responses:
+        '200':
+          description: Paid user page.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PaidUserPage'}
+  /crous_bot_api/admin/transactions:
+    get:
+      operationId: listTransactions
+      summary: Search and paginate payment transactions
+      security: [{adminCookie: []}]
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Search'
+      responses:
+        '200':
+          description: Transaction page.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/TransactionPage'}
 components:
+  securitySchemes:
+    adminCookie:
+      type: apiKey
+      in: cookie
+      name: crous_admin_access
   parameters:
+    CsrfToken:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    Page:
+      name: page
+      in: query
+      schema: {type: integer, minimum: 1, default: 1}
+    PageSize:
+      name: page_size
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+    Search:
+      name: q
+      in: query
+      schema: {type: string, maxLength: 100}
     PathTail:
       name: path
       in: path
@@ -187,7 +357,104 @@ components:
       schema:
         type: string
         minLength: 1
+  responses:
+    Unauthorized:
+      description: A valid administrator session is required.
+      content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}
+    CsrfRejected:
+      description: Origin or CSRF validation failed.
+      content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}
+    RateLimited:
+      description: Too many sign-in attempts.
+      content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}
+    Conflict:
+      description: The requested mutation conflicts with existing protected data.
+      content: {application/json: {schema: {$ref: '#/components/schemas/ErrorResponse'}}}
   schemas:
+    AdminLoginRequest:
+      type: object
+      required: [username, password]
+      properties:
+        username: {type: string, example: '@gogona'}
+        password: {type: string, writeOnly: true}
+    AdminCreateRequest:
+      type: object
+      required: [name, username, password]
+      properties:
+        name: {type: string}
+        username: {type: string}
+        password: {type: string, writeOnly: true, minLength: 12}
+        role: {type: string, enum: [admin, superadmin], default: admin}
+    AdminProfile:
+      type: object
+      required: [id, name, username, role, is_active, created_at]
+      properties:
+        id: {type: integer}
+        name: {type: string}
+        username: {type: string, example: '@gogona'}
+        role: {type: string, enum: [admin, superadmin]}
+        is_active: {type: boolean}
+        created_at: {type: string, format: date-time}
+        last_login_at: {type: [string, 'null'], format: date-time}
+    AdminProfileEnvelope:
+      type: object
+      required: [admin]
+      properties: {admin: {$ref: '#/components/schemas/AdminProfile'}}
+    PageMeta:
+      type: object
+      required: [page, page_size, total, pages]
+      properties:
+        page: {type: integer}
+        page_size: {type: integer}
+        total: {type: integer}
+        pages: {type: integer}
+    AdminPage:
+      type: object
+      required: [items, meta]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/AdminProfile'}}
+        meta: {$ref: '#/components/schemas/PageMeta'}
+    RevenuePoint:
+      type: object
+      required: [key, amount_cents]
+      properties: {key: {type: string}, amount_cents: {type: integer}}
+    AdminDashboard:
+      type: object
+      required: [total_users, active_paid_subscribers, active_monitoring_anchors, revenue_cents, revenue_series]
+      properties:
+        total_users: {type: integer}
+        active_paid_subscribers: {type: integer}
+        active_monitoring_anchors: {type: integer}
+        revenue_cents: {type: integer}
+        revenue_series: {type: array, items: {$ref: '#/components/schemas/RevenuePoint'}}
+    BuyerList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            required: [purchase_id, plan, amount_cents, status]
+            properties:
+              purchase_id: {type: integer}
+              username: {type: [string, 'null']}
+              plan: {type: string}
+              amount_cents: {type: integer}
+              purchased_at: {type: [string, 'null'], format: date-time}
+              status: {type: string}
+    PaidUserPage:
+      type: object
+      required: [items, meta]
+      properties:
+        items: {type: array, items: {type: object}}
+        meta: {$ref: '#/components/schemas/PageMeta'}
+    TransactionPage:
+      type: object
+      required: [items, meta]
+      properties:
+        items: {type: array, items: {type: object}}
+        meta: {$ref: '#/components/schemas/PageMeta'}
     HealthResponse:
       type: object
       required: [status]
