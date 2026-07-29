@@ -85,6 +85,7 @@ uv run --with pip-audit --extra dev pip-audit
 docker compose config --quiet
 docker compose up -d app api admin_panel next_app proxy
 docker compose exec proxy nginx -t
+(cd web_app && npm ci && npm audit --omit=dev && npm run build)
 ```
 
 ## Operations notes

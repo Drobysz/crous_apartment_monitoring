@@ -22,6 +22,9 @@ Audit date: 2026-07-26
   no card-processing SDK, browser automation, or additional payment dependency is
   introduced. Webhook verification uses Python standard-library HMAC and has
   fixture-based coverage for entitlement behavior.
+- The internal Next.js service is pinned to 16.2.12. Its production dependency
+  tree overrides PostCSS and Sharp to their patched releases; `npm audit
+  --omit=dev` reports zero vulnerabilities.
 
 ## Resolved direct packages
 
@@ -62,4 +65,5 @@ docker compose run --rm app alembic upgrade head
 docker compose config --quiet
 docker compose up -d app api admin_panel next_app proxy
 docker compose exec proxy nginx -t
+(cd web_app && npm ci && npm audit --omit=dev && npm run build)
 ```
