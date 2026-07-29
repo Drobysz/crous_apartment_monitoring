@@ -20,6 +20,9 @@ from app.core.config import get_settings
 pytestmark = pytest.mark.integration
 
 EXPECTED_TABLES = {
+    "admin_audits",
+    "admin_sessions",
+    "admins",
     "alembic_version",
     "geocoding_cache",
     "image_cache",

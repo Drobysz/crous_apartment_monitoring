@@ -19,6 +19,7 @@ dependencies = [
   "httpx>=0.28.1,<0.29",
   "pydantic-settings>=2.14.2,<3",
   "structlog>=26.1,<27",
+  "bcrypt>=4.3,<5",
 ]
 
 [project.optional-dependencies]

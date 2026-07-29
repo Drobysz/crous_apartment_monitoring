@@ -34,6 +34,7 @@ class User(Timestamped, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     telegram_chat_id: Mapped[int] = mapped_column(BigInteger)
+    telegram_username: Mapped[str | None] = mapped_column(String(32), index=True)
     language: Mapped[str] = mapped_column(String(2), default="fr")
     telegram_language_code: Mapped[str | None] = mapped_column(String(16))
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -93,6 +94,7 @@ class Purchase(Timestamped, Base):
     stripe_event_id: Mapped[str | None] = mapped_column(String(255), unique=True)
     amount_cents: Mapped[int | None]
     status: Mapped[str] = mapped_column(String(32), index=True)
+    is_test: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     purchased_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
@@ -219,3 +221,38 @@ class GeocodingCache(Base):
     locale: Mapped[str] = mapped_column(String(8), primary_key=True)
     response: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class Admin(Timestamped, Base):
+    __tablename__ = "admins"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(128))
+    username: Mapped[str] = mapped_column(String(33))
+    username_key: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(16), default="admin", index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AdminSession(Base):
+    __tablename__ = "admin_sessions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    admin_id: Mapped[int] = mapped_column(ForeignKey("admins.id", ondelete="CASCADE"), index=True)
+    refresh_token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    csrf_token_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AdminAudit(Base):
+    __tablename__ = "admin_audits"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    actor_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admins.id", ondelete="SET NULL"), index=True)
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    target_type: Mapped[str] = mapped_column(String(64))
+    target_id: Mapped[str | None] = mapped_column(String(64))
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
