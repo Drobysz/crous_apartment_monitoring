@@ -2,7 +2,7 @@
 
 Multilingual Telegram monitoring for publicly listed CROUS accommodation. The user interface supports English, Russian, Ukrainian, Turkish, Persian, French, and Arabic. It uses the live CROUS structured search endpoint, not authentication or protection bypasses. See [INVESTIGATION.md](INVESTIGATION.md) for the verified request mechanism and architecture.
 
-The bot offers Free, one-time Trial, Season, and optional Lifetime access. Paid plans use Stripe Checkout; payment card data never reaches the bot. See [SUBSCRIPTIONS.md](SUBSCRIPTIONS.md) for product rules and [openapi.yaml](openapi.yaml) for webhook contracts.
+The bot offers Free, one-time Trial, Season, and optional Lifetime access. Paid plans use Stripe Checkout; payment card data never reaches the bot. See [project documentation](DOCUMENTATION.md#product-and-subscriptions) for product rules and [openapi.yaml](openapi.yaml) for webhook contracts.
 
 ## Requirements and configuration
 
@@ -61,7 +61,7 @@ cp .env.example .env
 docker compose up --build
 ```
 
-The Compose `migrate` service applies the schema before the app, API, administration, and worker services start. For the explicit baseline and the safe adoption procedure for a pre-existing database, see [MIGRATIONS.md](MIGRATIONS.md).
+The Compose `migrate` service applies the schema before the app, API, administration, and worker services start. For the explicit baseline and the safe adoption procedure for a pre-existing database, see [project documentation](DOCUMENTATION.md#database-migrations).
 
 The Compose stack includes an internal HTTP-only Nginx router. It publishes `NGINX_EXTERNAL_PORT` (default `8080`) and forwards webhooks, payments, API, administration, and web-app paths to their internal services. It has no TLS, certificate, redirect, or domain configuration. Point the existing Nginx Proxy Manager at `http://SERVER_IP:8080`; it remains solely responsible for HTTPS and certificates.
 
@@ -113,6 +113,6 @@ printf '%s\n' "$ADMIN_PASSWORD" | uv run python -m app.admin.cli create-superadm
   --name "Operations lead" --username @gogona --password-stdin --update-existing
 ```
 
-Set `ADMIN_SESSION_SECRET` to a long random value before enabling `/panel/`. The panel uses server-owned, rotating HttpOnly sessions; it exposes no raw bearer token to browser code. See [ADMIN_PANEL.md](ADMIN_PANEL.md) for its API, roles, and deployment boundaries, [FILTER_AUDIT.md](FILTER_AUDIT.md) for filter semantics, and [DESIGN_ACCESSIBILITY_REPORT.md](DESIGN_ACCESSIBILITY_REPORT.md) for the responsive and keyboard design review.
+Set `ADMIN_SESSION_SECRET` to a long random value before enabling `/panel/`. The panel uses server-owned, rotating HttpOnly sessions; it exposes no raw bearer token to browser code. See [project documentation](DOCUMENTATION.md#administration-and-notification-bot) for panel roles and deployment boundaries, [filter semantics](DOCUMENTATION.md#monitoring-filters), and the [design and accessibility review](DOCUMENTATION.md#administration-design-and-accessibility).
 
 `NOTIFICATION_BOT_TOKEN` and `NOTIFICATION_WEBHOOK_SECRET` configure the independent operational notification bot. An active administrator must start it from their private Telegram chat; the bot matches that Telegram username to the administrator account before registering the chat for notifications. Its public webhook path is `/notification_bot/webhook`; it runs separately from the student-facing Telegram bot.
