@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from aiogram import Bot, Dispatcher
 from fastapi import FastAPI, Header, HTTPException
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.db.session import SessionLocal
 from app.notification_bot.handlers import build_router
 
@@ -15,11 +15,23 @@ dispatcher = Dispatcher()
 dispatcher.include_router(build_router(SessionLocal))
 
 
+async def configure_webhook(notification_bot: Bot, configured_settings: Settings) -> None:
+    """Register the public notification-bot webhook during a webhook deployment."""
+    if configured_settings.run_mode != "webhook" or configured_settings.notification_webhook_secret is None:
+        return
+    webhook_url = f"{str(configured_settings.public_base_url).rstrip('/')}{configured_settings.notification_bot_webhook_path}"
+    await notification_bot.set_webhook(
+        webhook_url,
+        secret_token=configured_settings.notification_webhook_secret.get_secret_value(),
+    )
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global bot
     if settings.notification_bot_token is not None:
         bot = Bot(settings.notification_bot_token.get_secret_value())
+        await configure_webhook(bot, settings)
     yield
     if bot is not None:
         await bot.session.close()

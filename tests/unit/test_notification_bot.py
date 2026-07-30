@@ -2,7 +2,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from app.admin.security import hash_password
+from app.core.config import Settings
 from app.db.models import Admin, Base
+from app.notification_bot.main import configure_webhook
 from app.notification_bot.service import (
     active_notification_chat_ids,
     register_admin_notification_chat,
@@ -45,3 +47,21 @@ async def test_notification_chat_requires_active_admin_username() -> None:
         await session.flush()
         assert await active_notification_chat_ids(session) == []
     await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_notification_bot_registers_its_webhook_in_webhook_mode() -> None:
+    calls: list[tuple[str, str]] = []
+
+    class FakeBot:
+        async def set_webhook(self, url: str, *, secret_token: str) -> None:
+            calls.append((url, secret_token))
+
+    settings = Settings(
+        run_mode="webhook",
+        public_base_url="https://bot.example.test",
+        notification_webhook_secret="notification-secret",
+    )
+    await configure_webhook(FakeBot(), settings)  # type: ignore[arg-type]
+
+    assert calls == [("https://bot.example.test/notification_bot/webhook", "notification-secret")]

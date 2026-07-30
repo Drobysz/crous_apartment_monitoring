@@ -453,6 +453,20 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
                                 value=search.location_display_name,
                             ),
                         )
+                        # The synchronizer reads through its own session, so persist the
+                        # new search before it fetches and displays the first results.
+                        await session.commit()
+                        try:
+                            await run_search_sync(search.id, callback.bot, callback.id)
+                        except (SnapshotDeliveryError, CrousUnavailable, httpx.HTTPError) as error:
+                            logger.warning(
+                                "initial_listing_request_failed",
+                                correlation_id=callback.id,
+                                telegram_user_id=user.telegram_user_id,
+                                search_id=search.id,
+                                reason=str(error),
+                            )
+                            await callback.message.answer(i18n.text(user.language, "error"))
             elif action == "list":
                 await send_stored_listings(callback, session, user)
             elif action == "check-now":
