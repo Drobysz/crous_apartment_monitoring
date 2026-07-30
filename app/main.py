@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from html import escape
 
+import structlog
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
@@ -19,6 +20,7 @@ from app.crous.client import CrousClient
 from app.db.models import User
 from app.db.session import SessionLocal
 from app.geocoding.provider import PhotonProvider
+from app.notification_bot.service import NotificationBotUnavailable, send_operational_notification
 from app.payments.stripe import (
     ProcessedPayment,
     StripeError,
@@ -32,6 +34,7 @@ from app.payments.stripe import (
 settings = get_settings()
 bot: Bot | None = None
 dispatcher: Dispatcher | None = None
+logger = structlog.get_logger(__name__)
 
 
 @asynccontextmanager
@@ -75,20 +78,47 @@ def payment_page(title: str, message: str, *, successful: bool) -> HTMLResponse:
     )
 
 
+def operational_payment_confirmation(payment: ProcessedPayment) -> str:
+    from app.core.i18n import i18n
+
+    username = payment.user.telegram_username
+    recipient = f"@{username.lstrip('@')}" if username else f"Telegram ID {payment.user.telegram_user_id}"
+    euros, cents = divmod(payment.plan.price_cents, 100)
+    amount = f"{euros},{cents:02d} €"
+    return "\n".join(
+        (
+            "💳 Подтверждена оплата",
+            f"Пользователь: {recipient}",
+            f"Тариф: {i18n.text('ru', f'plan-{payment.plan.code}')}",
+            f"Сумма: {amount}",
+        )
+    )
+
+
 async def notify_payment_confirmation(payment: ProcessedPayment | None) -> None:
-    if payment is None or bot is None:
+    if payment is None:
         return
     from app.core.i18n import i18n
 
     if not payment.duplicate:
-        await bot.send_message(
-            payment.user.telegram_chat_id,
-            i18n.text(
-                payment.user.language,
-                "payment-confirmed",
-                plan=i18n.text(payment.user.language, f"plan-{payment.plan.code}"),
-            ),
-        )
+        if bot is not None:
+            await bot.send_message(
+                payment.user.telegram_chat_id,
+                i18n.text(
+                    payment.user.language,
+                    "payment-confirmed",
+                    plan=i18n.text(payment.user.language, f"plan-{payment.plan.code}"),
+                ),
+            )
+        try:
+            await send_operational_notification(settings, operational_payment_confirmation(payment))
+        except NotificationBotUnavailable:
+            logger.info("operational_payment_notification_skipped", reason="notification_bot_unavailable")
+        except Exception:
+            logger.exception("operational_payment_notification_failed", user_id=payment.user.id)
+
+    if bot is None:
+        return
 
     async with SessionLocal() as session:
         user = await session.get(User, payment.user.id)
