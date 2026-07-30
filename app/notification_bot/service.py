@@ -20,6 +20,12 @@ def username_key(username: str | None) -> str | None:
     return normalized or None
 
 
+def telegram_username_handle(username: str | None) -> str | None:
+    """Return Telegram's username in the canonical @username form."""
+    key = username_key(username)
+    return f"@{key}" if key is not None else None
+
+
 async def register_admin_notification_chat(
     session: AsyncSession,
     *,
