@@ -104,12 +104,12 @@ function Dialog({ title, onClose, children, t }) {
       background.inert = true;
       background.setAttribute("aria-hidden", "true");
     }
-    const focusable = ref.current?.querySelector("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
+    const focusable = ref.current?.querySelector("button, [href], input, textarea, [tabindex]:not([tabindex='-1'])");
     focusable?.focus();
     const onKeyDown = (event) => {
       if (event.key === "Escape") onClose();
       if (event.key === "Tab") {
-        const elements = [...ref.current.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")];
+        const elements = [...ref.current.querySelectorAll("button, [href], input, textarea, [tabindex]:not([tabindex='-1'])")];
         if (!elements.length) return;
         const first = elements[0];
         const last = elements[elements.length - 1];
@@ -136,17 +136,17 @@ function Dialog({ title, onClose, children, t }) {
   return createPortal(<div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section ref={ref} className="modal" role="dialog" aria-modal="true" aria-labelledby={titleId}><header className="modal-header"><h2 id={titleId}>{title}</h2><button className="icon-button" type="button" onClick={onClose} aria-label={t("close")}><X aria-hidden="true" size={18} strokeWidth={2.4} /></button></header>{children}</section></div>, document.body);
 }
 
-function LanguagePicker({ value, onChange, t }) {
+function ChoicePicker({ value, onChange, options, label, className, iconSize = 18 }) {
   const [open, setOpen] = useState(false);
   const [rendered, setRendered] = useState(false);
-  const [activeIndex, setActiveIndex] = useState(LOCALE_OPTIONS.findIndex((option) => option.value === value));
+  const [activeIndex, setActiveIndex] = useState(options.findIndex((option) => option.value === value));
   const triggerRef = useRef(null);
   const menuRef = useRef(null);
   const optionRefs = useRef([]);
   const listId = useId();
   const labelId = useId();
   const closeTimer = useRef(null);
-  const selected = LOCALE_OPTIONS.find((option) => option.value === value) || LOCALE_OPTIONS[0];
+  const selected = options.find((option) => option.value === value) || options[0];
 
   const closeMenu = useCallback((restoreFocus = false) => {
     if (!rendered) return;
@@ -156,12 +156,12 @@ function LanguagePicker({ value, onChange, t }) {
     if (restoreFocus) triggerRef.current?.focus();
   }, [rendered]);
 
-  const openMenu = useCallback((index = LOCALE_OPTIONS.findIndex((option) => option.value === value)) => {
+  const openMenu = useCallback((index = options.findIndex((option) => option.value === value)) => {
     window.clearTimeout(closeTimer.current);
     setActiveIndex(index < 0 ? 0 : index);
     setRendered(true);
     requestAnimationFrame(() => setOpen(true));
-  }, [value]);
+  }, [options, value]);
 
   const choose = useCallback((option) => {
     onChange(option.value);
@@ -169,10 +169,10 @@ function LanguagePicker({ value, onChange, t }) {
   }, [closeMenu, onChange]);
 
   const move = useCallback((nextIndex) => {
-    const index = (nextIndex + LOCALE_OPTIONS.length) % LOCALE_OPTIONS.length;
+    const index = (nextIndex + options.length) % options.length;
     setActiveIndex(index);
     optionRefs.current[index]?.focus();
-  }, []);
+  }, [options.length]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -186,10 +186,10 @@ function LanguagePicker({ value, onChange, t }) {
   useEffect(() => () => window.clearTimeout(closeTimer.current), []);
 
   function handleTriggerKeyDown(event) {
-    const current = LOCALE_OPTIONS.findIndex((option) => option.value === value);
+    const current = options.findIndex((option) => option.value === value);
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      const next = (current + (event.key === "ArrowDown" ? 1 : -1) + LOCALE_OPTIONS.length) % LOCALE_OPTIONS.length;
+      const next = (current + (event.key === "ArrowDown" ? 1 : -1) + options.length) % options.length;
       openMenu(next);
       window.setTimeout(() => optionRefs.current[next]?.focus(), 0);
     } else if (event.key === "Enter" || event.key === " ") {
@@ -204,12 +204,16 @@ function LanguagePicker({ value, onChange, t }) {
     if (event.key === "ArrowDown") { event.preventDefault(); move(index + 1); }
     else if (event.key === "ArrowUp") { event.preventDefault(); move(index - 1); }
     else if (event.key === "Home") { event.preventDefault(); move(0); }
-    else if (event.key === "End") { event.preventDefault(); move(LOCALE_OPTIONS.length - 1); }
+    else if (event.key === "End") { event.preventDefault(); move(options.length - 1); }
     else if (event.key === "Escape") { event.preventDefault(); closeMenu(true); }
     else if (event.key === "Tab") closeMenu();
   }
 
-  return <div className="language-picker"><span className="sr-only" id={labelId}>{t("language")}</span><button ref={triggerRef} type="button" className="language-trigger" aria-labelledby={labelId} aria-haspopup="listbox" aria-expanded={open} aria-controls={listId} onClick={() => open ? closeMenu() : openMenu()} onKeyDown={handleTriggerKeyDown}><span>{selected.label}</span><ChevronDown className={open ? "language-chevron open" : "language-chevron"} aria-hidden="true" size={16} strokeWidth={2.3} /></button>{rendered && <div ref={menuRef} id={listId} className={open ? "language-menu open" : "language-menu"} role="listbox" aria-labelledby={labelId}>{LOCALE_OPTIONS.map((option, index) => <button ref={(node) => { optionRefs.current[index] = node; }} key={option.value} type="button" role="option" aria-selected={option.value === value} lang={option.language} className={option.value === value ? "selected" : ""} onClick={() => choose(option)} onKeyDown={(event) => handleOptionKeyDown(event, index)} onFocus={() => setActiveIndex(index)}>{option.value === value && <span aria-hidden="true">✓</span>}{option.label}</button>)}</div>}</div>;
+  return <div className={`choice-picker ${className}`}><span className="sr-only" id={labelId}>{label}</span><button ref={triggerRef} type="button" className="choice-trigger" aria-labelledby={labelId} aria-haspopup="listbox" aria-expanded={open} aria-controls={listId} onClick={() => open ? closeMenu() : openMenu()} onKeyDown={handleTriggerKeyDown}><span>{selected.label}</span><ChevronDown className={open ? "choice-chevron open" : "choice-chevron"} aria-hidden="true" size={iconSize} strokeWidth={2.3} /></button>{rendered && <div ref={menuRef} id={listId} className={open ? "choice-menu open" : "choice-menu"} role="listbox" aria-labelledby={labelId}>{options.map((option, index) => <button ref={(node) => { optionRefs.current[index] = node; }} key={option.value} type="button" role="option" aria-selected={option.value === value} lang={option.language} className={option.value === value ? "selected" : ""} onClick={() => choose(option)} onKeyDown={(event) => handleOptionKeyDown(event, index)} onFocus={() => setActiveIndex(index)}>{option.value === value && <span aria-hidden="true">✓</span>}{option.label}</button>)}</div>}</div>;
+}
+
+function LanguagePicker({ value, onChange, t }) {
+  return <ChoicePicker value={value} onChange={onChange} options={LOCALE_OPTIONS} label={t("language")} className="language-picker" />;
 }
 
 function Preferences({ theme, onThemeChange, localePreference, onLocaleChange, t }) {
@@ -220,7 +224,7 @@ function PasswordToggle({ visible, onToggle, t }) {
   return <button className="password-toggle" type="button" onClick={onToggle} aria-pressed={visible} aria-label={visible ? t("hidePassword") : t("showPassword")} title={visible ? t("hidePassword") : t("showPassword")}>{visible ? <EyeOff aria-hidden="true" size={18} strokeWidth={2.2} /> : <Eye aria-hidden="true" size={18} strokeWidth={2.2} />}</button>;
 }
 
-function Login({ onSignedIn, t, locale, theme, onThemeChange, localePreference, onLocaleChange }) {
+function Login({ onSignedIn, t, theme, onThemeChange, localePreference, onLocaleChange }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -241,7 +245,7 @@ function Login({ onSignedIn, t, locale, theme, onThemeChange, localePreference, 
       setSubmitting(false);
     }
   }
-  return <main className="login-shell"><section className="login-panel" aria-labelledby="login-title"><div className="brand-mark" aria-hidden="true">C</div><h1 id="login-title">{t("appName")}</h1><p>{t("signInHelp")}</p><form onSubmit={submit} noValidate><label htmlFor={usernameId}>{t("username")}</label><input id={usernameId} name="username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required dir="ltr" /><label htmlFor={passwordId}>{t("password")}</label><div className="password-field"><input id={passwordId} name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><PasswordToggle visible={showPassword} onToggle={() => setShowPassword((value) => !value)} t={t} /></div><p className="field-help">{t("passwordHelp")}</p>{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-primary" type="submit" disabled={submitting}>{t("signIn")}</button></form><div className="login-preferences"><Preferences theme={theme} onThemeChange={onThemeChange} localePreference={localePreference} onLocaleChange={onLocaleChange} t={t} /></div></section></main>;
+  return <main className="login-shell"><section className="login-panel" aria-labelledby="login-title"><h1 id="login-title">{t("appName")}</h1><p>{t("signInHelp")}</p><form onSubmit={submit} noValidate><label htmlFor={usernameId}>{t("username")}</label><input id={usernameId} name="username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required dir="ltr" /><label htmlFor={passwordId}>{t("password")}</label><div className="password-field"><input id={passwordId} name="password" type={showPassword ? "text" : "password"} autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /><PasswordToggle visible={showPassword} onToggle={() => setShowPassword((value) => !value)} t={t} /></div><p className="field-help">{t("passwordHelp")}</p>{error && <p className="form-error" role="alert">{error}</p>}<button className="button button-primary" type="submit" disabled={submitting}>{t("signIn")}</button></form><div className="login-preferences"><Preferences theme={theme} onThemeChange={onThemeChange} localePreference={localePreference} onLocaleChange={onLocaleChange} t={t} /></div></section></main>;
 }
 
 function Status({ loading, error, empty, onRetry, t, children }) {
@@ -272,7 +276,6 @@ function SegmentedControl({ options, value, onChange, ariaLabel, t }) {
   const buttonRefs = useRef([]);
   const [hovered, setHovered] = useState(null);
   const [indicator, setIndicator] = useState({ x: 3, width: 0, baseWidth: 1 });
-  const [moving, setMoving] = useState(false);
   const activeIndex = hovered ?? Math.max(0, options.findIndex((option) => option === value));
 
   const positionIndicator = useCallback((index) => {
@@ -281,8 +284,6 @@ function SegmentedControl({ options, value, onChange, ariaLabel, t }) {
     if (!root || !button) return;
     const baseWidth = Math.max(...buttonRefs.current.filter(Boolean).map((node) => node.offsetWidth), button.offsetWidth);
     setIndicator({ x: button.offsetLeft, width: button.offsetWidth, baseWidth });
-    setMoving(true);
-    window.setTimeout(() => setMoving(false), 360);
   }, []);
 
   useEffect(() => {
@@ -297,7 +298,7 @@ function SegmentedControl({ options, value, onChange, ariaLabel, t }) {
     return () => observer.disconnect();
   }, [activeIndex, positionIndicator]);
 
-  return <div ref={rootRef} className={moving ? "segmented is-moving" : "segmented"} role="group" aria-label={ariaLabel} onMouseLeave={() => setHovered(null)}><span className="segmented-highlight" aria-hidden="true" style={{ width: indicator.baseWidth, transform: `translateX(${indicator.x}px) scaleX(${indicator.width / indicator.baseWidth})` }} />{options.map((key, index) => <button ref={(node) => { buttonRefs.current[index] = node; }} key={key} type="button" className={value === key ? "selected" : ""} aria-pressed={value === key} onMouseEnter={() => setHovered(index)} onFocus={() => setHovered(index)} onBlur={() => setHovered(null)} onClick={() => onChange(key)}>{t(key)}</button>)}</div>;
+  return <div ref={rootRef} className="segmented" role="group" aria-label={ariaLabel} onMouseLeave={() => setHovered(null)}><span className="segmented-highlight" aria-hidden="true" style={{ width: indicator.baseWidth, transform: `translateX(${indicator.x}px) scaleX(${indicator.width / indicator.baseWidth})` }} />{options.map((key, index) => <button ref={(node) => { buttonRefs.current[index] = node; }} key={key} type="button" className={value === key ? "selected" : ""} aria-pressed={value === key} onMouseEnter={() => setHovered(index)} onFocus={() => setHovered(index)} onBlur={() => setHovered(null)} onClick={() => onChange(key)}>{t(key)}</button>)}</div>;
 }
 
 function Dashboard({ locale, t }) {
@@ -330,7 +331,8 @@ function AdminForm({ onClose, onCreated, t }) {
       setError(requestError.message || t("error"));
     } finally { setSubmitting(false); }
   }
-  return <Dialog title={t("createAdmin")} onClose={onClose} t={t}><form className="dialog-form" onSubmit={submit}><label htmlFor={ids.name}>{t("name")}</label><input id={ids.name} value={form.name} onChange={update("name")} required /><label htmlFor={ids.username}>{t("username")}</label><input id={ids.username} value={form.username} onChange={update("username")} required dir="ltr" /><label htmlFor={ids.password}>{t("password")}</label><div className="password-field"><input id={ids.password} type={showPassword ? "text" : "password"} value={form.password} onChange={update("password")} required /><PasswordToggle visible={showPassword} onToggle={() => setShowPassword((value) => !value)} t={t} /></div><p className="field-help">{t("passwordHelp")}</p><label htmlFor={ids.role}>{t("role")}</label><select id={ids.role} value={form.role} onChange={update("role")}><option value="admin">{t("admin")}</option><option value="superadmin">{t("superadmin")}</option></select>{error && <p className="form-error" role="alert">{error}</p>}<footer><button className="button" type="button" onClick={onClose}>{t("cancel")}</button><button className="button button-primary" type="submit" disabled={submitting}>{t("save")}</button></footer></form></Dialog>;
+  const roleOptions = [{ value: "admin", label: t("admin") }, { value: "superadmin", label: t("superadmin") }];
+  return <Dialog title={t("createAdmin")} onClose={onClose} t={t}><form className="dialog-form" onSubmit={submit}><label htmlFor={ids.name}>{t("name")}</label><input id={ids.name} value={form.name} onChange={update("name")} required /><label htmlFor={ids.username}>{t("username")}</label><input id={ids.username} value={form.username} onChange={update("username")} required dir="ltr" /><label htmlFor={ids.password}>{t("password")}</label><div className="password-field"><input id={ids.password} type={showPassword ? "text" : "password"} value={form.password} onChange={update("password")} required /><PasswordToggle visible={showPassword} onToggle={() => setShowPassword((value) => !value)} t={t} /></div><p className="field-help">{t("passwordHelp")}</p><span className="field-label" aria-hidden="true">{t("role")}</span><ChoicePicker value={form.role} onChange={(role) => setForm((current) => ({ ...current, role }))} options={roleOptions} label={t("role")} className="role-picker" iconSize={20} />{error && <p className="form-error" role="alert">{error}</p>}<footer><button className="button" type="button" onClick={onClose}>{t("cancel")}</button><button className="button button-primary" type="submit" disabled={submitting}>{t("save")}</button></footer></form></Dialog>;
 }
 
 function Admins({ t, locale, profile }) {
@@ -385,5 +387,5 @@ export default function Home() {
   useEffect(() => { document.documentElement.lang = locale; document.documentElement.dir = locale === "ar" || locale === "fa" ? "rtl" : "ltr"; }, [locale]);
   useEffect(() => { request("/me").then(setProfile).catch((error) => setProfile(error.status === 401 ? null : null)); }, []);
   if (profile === undefined) return <main className="boot"><span>{t("loading")}</span></main>;
-  return profile ? <Application profile={profile} onSignedOut={() => setProfile(null)} locale={locale} theme={theme} onThemeChange={setTheme} localePreference={localePreference} onLocaleChange={chooseLocale} t={t} /> : <Login onSignedIn={setProfile} t={t} locale={locale} theme={theme} onThemeChange={setTheme} localePreference={localePreference} onLocaleChange={chooseLocale} />;
+  return profile ? <Application profile={profile} onSignedOut={() => setProfile(null)} locale={locale} theme={theme} onThemeChange={setTheme} localePreference={localePreference} onLocaleChange={chooseLocale} t={t} /> : <Login onSignedIn={setProfile} t={t} theme={theme} onThemeChange={setTheme} localePreference={localePreference} onLocaleChange={chooseLocale} />;
 }
