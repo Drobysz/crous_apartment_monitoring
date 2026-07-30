@@ -108,6 +108,12 @@ async def synchronize_search(
         active = await _active_group(session, search.id)
         now = datetime.now(UTC)
         if active and active.fingerprint == fingerprint:
+            # Image URLs are deliberately excluded from the snapshot fingerprint
+            # so CDN/cache URL changes do not resend the whole result set.  Keep
+            # the persisted metadata fresh nevertheless: it lets previously
+            # saved listings recover when a corrected public image route is
+            # discovered.
+            await apply_snapshot(session, search, items)
             search.last_checked_at = search.last_success_at = now
             search.consecutive_errors = 0
             await session.commit()

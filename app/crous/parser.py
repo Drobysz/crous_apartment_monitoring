@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 from app.crous.exceptions import CrousParseError
 from app.crous.models import CrousListing
@@ -38,6 +38,18 @@ def parse_surface(value: str) -> tuple[float | None, float | None]:
     return (numbers[0], numbers[-1]) if numbers else (None, None)
 
 
+def preview_image_url(base_url: str, media_key: str) -> str:
+    """Build CROUS's public preview URL from an API media object key.
+
+    CROUS returns values such as ``2789/photo.jpg``, not public URLs.  The
+    original ``/media/{key}`` route is not exposed; the public listing site
+    uses the image-cache resolver instead.
+    """
+
+    encoded_key = quote(media_key, safe="/")
+    return urljoin(base_url.rstrip("/") + "/", f"media/cache/resolve/preview/{encoded_key}")
+
+
 def parse_search_response(payload: dict[str, Any], base_url: str, tool_id: int) -> list[CrousListing]:
     results = payload.get("results")
     if not isinstance(results, dict) or not isinstance(results.get("items"), list):
@@ -70,7 +82,7 @@ def parse_listing(item: dict[str, Any], base_url: str, tool_id: int) -> CrousLis
     beds = ", ".join(f"{entry.get('count')} {entry.get('type')}" for entry in item.get("beds", []) if entry.get("count")) or None
     media = item.get("medias") or residence.get("medias") or []
     image = next((entry.get("src") for entry in media if entry.get("src")), None)
-    image_url = urljoin(base_url + "/", f"media/{image}") if image else None
+    image_url = preview_image_url(base_url, image) if image else None
     location = residence.get("location") or {}
     return CrousListing(
         external_id=external_id,

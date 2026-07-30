@@ -20,7 +20,7 @@ from app.monitoring.service import SnapshotDeliveryError, synchronize_search
 from app.monitoring.snapshot import canonical_snapshot
 
 
-def listing(identifier: str, *, price: int = 500) -> CrousListing:
+def listing(identifier: str, *, price: int = 500, image_url: str | None = None) -> CrousListing:
     return CrousListing(
         external_id=identifier,
         canonical_url=f"https://crous.example/tools/1/accommodations/{identifier}?tracking=ignored",
@@ -29,6 +29,7 @@ def listing(identifier: str, *, price: int = 500) -> CrousListing:
         price_cents=price,
         price_original=f"{price / 100:.2f} €",
         surface_original="18 m²",
+        primary_image_url=image_url,
     )
 
 
@@ -108,6 +109,55 @@ async def test_changed_snapshot_replaces_only_its_own_message_group() -> None:
         assert removed_link is not None
         assert not removed_link.is_currently_available
         assert removed_link.disappeared_at is not None
+    await engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_unchanged_snapshot_refreshes_stored_image_url() -> None:
+    class FakeBot:
+        async def send_message(self, _chat_id: int, *_: object, **__: object) -> SimpleNamespace:
+            return SimpleNamespace(message_id=1)
+
+    class FakeCrous:
+        def __init__(self, item: CrousListing) -> None:
+            self.item = item
+
+        async def search(self, *_: object, **__: object) -> list[CrousListing]:
+            return [self.item]
+
+    engine = create_async_engine("sqlite+aiosqlite://")
+    factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    async with factory() as session:
+        user = User(telegram_user_id=3, telegram_chat_id=44, language="ru")
+        session.add(user)
+        await session.flush()
+        search = Search(
+            user_id=user.id,
+            location_display_name="Nancy",
+            center_latitude=48.69,
+            center_longitude=6.18,
+            bounds_west=6.1,
+            bounds_north=48.8,
+            bounds_east=6.3,
+            bounds_south=48.6,
+        )
+        session.add(search)
+        await session.commit()
+        search_id = search.id
+
+    bot = FakeBot()
+    crous = FakeCrous(listing("one", image_url="https://crous.example/media/one.jpg"))
+    assert await synchronize_search(factory, bot, crous, search_id) == "changed"  # type: ignore[arg-type]
+
+    crous.item = listing("one", image_url="https://crous.example/media/cache/resolve/preview/one.jpg")
+    assert await synchronize_search(factory, bot, crous, search_id) == "unchanged"  # type: ignore[arg-type]
+
+    async with factory() as session:
+        stored = await session.scalar(select(Listing).where(Listing.external_id == "one"))
+        assert stored is not None
+        assert stored.primary_image_url == "https://crous.example/media/cache/resolve/preview/one.jpg"
     await engine.dispose()
 
 
