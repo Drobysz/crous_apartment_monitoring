@@ -7,10 +7,45 @@ import pytest
 
 from app.core.config import Settings
 from app.crous.client import CrousClient
-from app.crous.discovery import Tool
+from app.crous.discovery import Tool, discover_current_tool
 from app.crous.exceptions import CrousUnavailable
 from app.crous.models import Bounds
 from app.searches.service import InvalidBounds
+
+
+@pytest.mark.asyncio
+async def test_discovery_uses_public_residual_campaign_not_direct_allocation() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "tools": {
+                    "currentSchoolYear": {
+                        "id": 42,
+                        "managementYear": 2025,
+                        "mechanism": "flow",
+                        "isEnabled": True,
+                    },
+                    "nextSchoolYear": {
+                        "id": 47,
+                        "managementYear": 2026,
+                        "mechanism": "residual",
+                        "isEnabled": True,
+                    },
+                    "attributionDirect": {
+                        "id": 44,
+                        "managementYear": 2026,
+                        "mechanism": "direct_allocation",
+                        "isEnabled": True,
+                    },
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        tool = await discover_current_tool(client, "https://example.test")
+
+    assert tool == Tool(id=47, management_year=2026, mechanism="residual")
 
 
 @pytest.mark.asyncio

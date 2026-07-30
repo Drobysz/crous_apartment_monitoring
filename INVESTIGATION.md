@@ -9,7 +9,7 @@ The public CROUS application is SvelteKit. Its server-rendered search page embed
 - `GET /api/health` is used for readiness.
 - CROUS’s own Photon endpoint is available at `/photon/api` for place lookup/reverse geocoding.
 
-The client discovers the current highest enabled management year at startup instead of fixing a campaign ID. It detects non-JSON, auth, and overload responses as failures—not empty inventory. Campaign payload conventions can change, so this is the principal operational fragility; versioned fixtures and the discovery probe make that visible.
+The client discovers the latest enabled public search campaign at startup instead of fixing a campaign ID. It only considers the `flow` and `residual` mechanisms, excluding enabled special workflows such as direct allocation that do not contain the public housing catalogue. It detects non-JSON, auth, and overload responses as failures—not empty inventory. Campaign payload conventions can change, so this is the principal operational fragility; versioned fixtures and the discovery probe make that visible.
 
 ## Architecture
 

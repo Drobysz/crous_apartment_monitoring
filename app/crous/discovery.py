@@ -6,6 +6,8 @@ import httpx
 
 from app.crous.exceptions import CrousParseError
 
+PUBLIC_SEARCH_MECHANISMS = frozenset({"flow", "residual"})
+
 
 @dataclass(frozen=True)
 class Tool:
@@ -29,4 +31,22 @@ async def discover_tools(client: httpx.AsyncClient, base_url: str) -> list[Tool]
 
 
 async def discover_current_tool(client: httpx.AsyncClient, base_url: str) -> Tool:
-    return max(await discover_tools(client, base_url), key=lambda tool: tool.management_year)
+    """Choose the latest public housing-search campaign.
+
+    The context also exposes enabled tools for special workflows, such as direct
+    allocation.  Those endpoints do not contain the public listings displayed
+    on trouverunlogement and must not be used for a location search.
+    """
+
+    public_tools = [
+        tool for tool in await discover_tools(client, base_url) if tool.mechanism in PUBLIC_SEARCH_MECHANISMS
+    ]
+    if not public_tools:
+        raise CrousParseError("CROUS context did not contain an enabled public search tool")
+
+    # Prefer the newest campaign.  When both public mechanisms exist for the
+    # same year, the residual campaign is the public availability catalogue.
+    return max(
+        public_tools,
+        key=lambda tool: (tool.management_year, tool.mechanism == "residual", tool.id),
+    )
