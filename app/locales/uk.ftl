@@ -186,3 +186,10 @@ digest-stopped = Рекламні повідомлення про житло в�
 unsubscribed-digest = 🚨 Ви все ще шукаєте житло CROUS? Сьогодні виявлено: {total_today}.
 
 Нові місця з’явилися, зокрема, у: {top_departments}
+referral-owner-not-found = З вашим обліковим записом Telegram не пов’язано реферального акаунта.
+referral-owner-unavailable = Статистика рефералів ще не налаштована.
+referral-owner-dashboard-link = Ваша реферальна панель:
+
+{url}
+
+Посилання дійсне {minutes} хвилин.

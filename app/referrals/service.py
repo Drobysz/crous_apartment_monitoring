@@ -95,7 +95,9 @@ async def attribute_first_touch(
         return existing
     program = await session.scalar(
         select(ReferralProgram).where(
-            ReferralProgram.referral_code == referral_code, ReferralProgram.is_active.is_(True)
+            ReferralProgram.referral_code == referral_code,
+            ReferralProgram.is_active.is_(True),
+            ReferralProgram.deleted_at.is_(None),
         )
     )
     if program is None:
@@ -117,9 +119,26 @@ async def attribute_first_touch(
 async def bind_owner(
     session: AsyncSession, program: ReferralProgram, telegram_user_id: int
 ) -> bool:
+    if program.deleted_at is not None or not program.is_active:
+        return False
     if program.owner_telegram_user_id is not None:
         return program.owner_telegram_user_id == telegram_user_id
-    program.owner_telegram_user_id = telegram_user_id
+    bound_elsewhere = await session.scalar(
+        select(ReferralProgram.id).where(
+            ReferralProgram.owner_telegram_user_id == telegram_user_id,
+            ReferralProgram.id != program.id,
+        )
+    )
+    if bound_elsewhere is not None:
+        return False
+    # The unique database constraint is the final guard when two first
+    # verifications race. Keep the loser transaction usable for the bot.
+    try:
+        async with session.begin_nested():
+            program.owner_telegram_user_id = telegram_user_id
+            await session.flush()
+    except IntegrityError:
+        return False
     session.add(
         AdminAudit(
             actor_admin_id=None,
@@ -129,7 +148,6 @@ async def bind_owner(
             metadata_json={"telegram_user_id": telegram_user_id},
         )
     )
-    await session.flush()
     return True
 
 
@@ -370,7 +388,15 @@ async def consume_owner_login_token(session: AsyncSession, token: str) -> Referr
         .where(ReferralOwnerLoginToken.token_hash == hashlib.sha256(token.encode()).hexdigest())
         .with_for_update()
     )
-    if value is None or value.used_at is not None or value.expires_at <= now:
+    if value is None or value.used_at is not None:
+        return None
+    expires_at = value.expires_at
+    if expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=UTC)
+    if expires_at <= now:
         return None
     value.used_at = now
-    return await session.get(ReferralProgram, value.referral_program_id)
+    program = await session.get(ReferralProgram, value.referral_program_id)
+    if program is None or program.deleted_at is not None or not program.is_active:
+        return None
+    return program

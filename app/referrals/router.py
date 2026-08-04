@@ -22,7 +22,7 @@ from app.referrals.service import (
     request_payout,
 )
 
-router = APIRouter(prefix="/referral-owner", tags=["referral-owner"])
+router = APIRouter(prefix="/referral", tags=["referral-owner"])
 
 
 def _owner_key(settings: Settings) -> bytes:
@@ -67,7 +67,7 @@ async def owner_program(
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail={"code": "owner_authentication_required"})
     program = await session.get(ReferralProgram, _decode(authorization[7:], settings))
-    if program is None:
+    if program is None or program.deleted_at is not None or not program.is_active:
         raise HTTPException(status_code=401, detail={"code": "owner_session_unavailable"})
     return program
 
@@ -92,8 +92,8 @@ async def exchange(
     }
 
 
-@router.get("/me")
-async def me(
+@router.get("/dashboard")
+async def dashboard(
     program: ReferralProgram = Depends(owner_program), session: AsyncSession = Depends(get_session)
 ) -> dict[str, object]:
     value = await balances(session, program.id)

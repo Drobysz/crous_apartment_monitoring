@@ -186,3 +186,10 @@ digest-stopped = تم إيقاف رسائل السكن الترويجية.
 unsubscribed-digest = 🚨 هل ما زلت تبحث عن سكن CROUS؟ تم رصد {total_today} اليوم.
 
 ظهرت أماكن جديدة خصوصًا في: {top_departments}
+referral-owner-not-found = لا يوجد حساب إحالة مرتبط بحساب تيليجرام الخاص بك.
+referral-owner-unavailable = إحصاءات الإحالة غير مهيأة بعد.
+referral-owner-dashboard-link = لوحة معلومات الإحالة الخاصة بك:
+
+{url}
+
+هذا الرابط صالح لمدة {minutes} دقيقة.

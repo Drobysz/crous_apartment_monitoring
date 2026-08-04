@@ -1,15 +1,28 @@
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from app.db.models import Admin, Base, Purchase, SubscriptionPlan, User
+from app.db.models import (
+    Admin,
+    Base,
+    Purchase,
+    ReferralOwnerLoginToken,
+    ReferralProgram,
+    SubscriptionPlan,
+    User,
+    UserReferral,
+)
 from app.referrals.service import (
     WithdrawalError,
     attribute_first_touch,
     balances,
+    bind_owner,
+    consume_owner_login_token,
     create_commission_for_purchase,
     create_program,
+    issue_owner_login_token,
     request_payout,
 )
 from app.reports.service import ReportCooldownError, create_report
@@ -121,3 +134,64 @@ async def test_report_cooldown_uses_exact_hour_boundary_and_user_scope(
     assert blocked.value.remaining_seconds == 3600
     await create_report(session, second, "Independent", None, now=now)
     await create_report(session, first, "At boundary", None, now=now.replace(hour=13))
+
+
+@pytest.mark.asyncio
+async def test_soft_deleted_referral_keeps_history_but_rejects_new_attribution(
+    session: AsyncSession,
+) -> None:
+    program = await _program(session)
+    attributed_user = User(telegram_user_id=301, telegram_chat_id=301, language="en")
+    later_user = User(telegram_user_id=302, telegram_chat_id=302, language="en")
+    session.add_all((attributed_user, later_user))
+    await session.flush()
+    attribution = await attribute_first_touch(session, attributed_user, program.referral_code)
+    assert attribution is not None
+
+    program.deleted_at = datetime.now(UTC)
+    program.is_active = False
+    await session.flush()
+
+    assert await attribute_first_touch(session, later_user, program.referral_code) is None
+    stored = await session.scalar(select(UserReferral).where(UserReferral.id == attribution.id))
+    assert stored is not None and stored.referral_program_id == program.id
+
+
+@pytest.mark.asyncio
+async def test_owner_binding_uses_numeric_identity_and_prevents_duplicate_ownership(
+    session: AsyncSession,
+) -> None:
+    first = await _program(session)
+    second = ReferralProgram(
+        referral_code="creator-2",
+        owner_telegram_username="@second",
+        owner_username_key="second",
+        created_by_admin_id=first.created_by_admin_id,
+    )
+    session.add(second)
+    await session.flush()
+
+    assert await bind_owner(session, first, 4001)
+    first.owner_telegram_username = "@renamed"
+    first.owner_username_key = "renamed"
+    assert await bind_owner(session, first, 4001)
+    assert not await bind_owner(session, first, 4002)
+    assert not await bind_owner(session, second, 4001)
+
+
+@pytest.mark.asyncio
+async def test_expired_or_revoked_owner_login_tokens_are_rejected(session: AsyncSession) -> None:
+    program = await _program(session)
+    token = await issue_owner_login_token(session, program, ttl_minutes=15)
+    stored = await session.scalar(
+        select(ReferralOwnerLoginToken).where(
+            ReferralOwnerLoginToken.referral_program_id == program.id
+        )
+    )
+    assert stored is not None
+    stored.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+    assert await consume_owner_login_token(session, token) is None
+
+    fresh_token = await issue_owner_login_token(session, program, ttl_minutes=15)
+    program.is_active = False
+    assert await consume_owner_login_token(session, fresh_token) is None

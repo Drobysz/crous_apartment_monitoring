@@ -56,6 +56,15 @@ unsubscribed-digest = 🚨 Tu cherches encore un logement CROUS ? {total_today} 
 De nouvelles places sont apparues notamment dans : {top_departments}
 
 Tes alertes personnalisées sont en pause. Active ton abonnement pour recevoir les prochains logements correspondants en temps réel.
+referral-owner-not-found = Aucun compte de parrainage n’est associé à ton compte Telegram.
+
+Contacte le support si tu penses qu’il s’agit d’une erreur.
+referral-owner-unavailable = Les statistiques de parrainage ne sont pas encore configurées.
+referral-owner-dashboard-link = Ton tableau de bord de parrainage :
+
+{url}
+
+Ce lien est valable {minutes} minutes.
 list-loading = Recherche des logements disponibles…
 invalid-location-area = La zone sélectionnée est invalide. Choisissez-la à nouveau.
 last-change = 🕒 Liste modifiée : {value}

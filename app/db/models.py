@@ -475,6 +475,10 @@ class ReferralProgram(Timestamped, Base):
     owner_telegram_user_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True)
     commission_rate_basis_points: Mapped[int] = mapped_column(Integer, default=3000, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
+    deleted_by_admin_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admins.id", ondelete="SET NULL"), index=True
+    )
     created_by_admin_id: Mapped[int | None] = mapped_column(
         ForeignKey("admins.id", ondelete="SET NULL"), index=True
     )

@@ -21,7 +21,7 @@ pytestmark = pytest.mark.integration
 BASE = "20260729_01_base"
 ADMIN = "20260729_02_admin"
 FILTERS = "20260729_03_filters"
-HEAD = "20260804_08_referrals"
+HEAD = "20260804_09_referral_soft_delete"
 
 EXPECTED_TABLES = {
     "admin_audits",

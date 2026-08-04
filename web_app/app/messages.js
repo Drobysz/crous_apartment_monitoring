@@ -31,7 +31,10 @@ Object.assign(messages.en, {
   user: "User", platform: "Platform", fullReport: "Full report",
   referrals: "Referrals", createReferral: "Create referral", ownerUsername: "Owner Telegram username",
   referralCode: "Referral code", available: "Available", earned: "Lifetime earnings", paid: "Paid out",
-  copyLink: "Copy link", referralLinkCopied: "Referral link copied.", copyFailed: "Could not copy the referral link."
+  copyLink: "Copy link", referralLinkCopied: "Referral link copied.", copyFailed: "Could not copy the referral link.",
+  attachedUsers: "Attached users", pendingWithdrawals: "Pending withdrawals", referralIncome: "Referral commission income",
+  referralPurchases: "Referral purchases", customerPayment: "Customer payment", referralCommission: "Referral commission", currency: "Currency",
+  delete: "Delete", deleteReferral: "Delete referral", deleteReferralConfirm: "This hides the referral from active use but keeps its history, commissions, and payouts."
 });
 
 export function resolveLocale(input) {

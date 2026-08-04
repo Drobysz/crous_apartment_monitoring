@@ -1,7 +1,7 @@
 # ruff: noqa: B008
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
 from fastapi import (
@@ -63,7 +63,18 @@ from app.admin.service import (
     transaction_details,
 )
 from app.core.config import Settings, get_settings
-from app.db.models import Admin, AdminAudit, AdminSession, ReferralPayout, ReferralProgram
+from app.db.models import (
+    Admin,
+    AdminAudit,
+    AdminSession,
+    Purchase,
+    ReferralCommission,
+    ReferralPayout,
+    ReferralProgram,
+    SubscriptionPlan,
+    User,
+    UserReferral,
+)
 from app.db.session import get_session
 from app.referrals.service import (
     ReferralBalances,
@@ -497,7 +508,11 @@ async def referrals(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     programs = list(
-        await session.scalars(select(ReferralProgram).order_by(ReferralProgram.created_at.desc()))
+        await session.scalars(
+            select(ReferralProgram)
+            .where(ReferralProgram.deleted_at.is_(None))
+            .order_by(ReferralProgram.created_at.desc())
+        )
     )
     return {
         "items": [
@@ -538,7 +553,7 @@ async def referral_detail(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     program = await session.get(ReferralProgram, referral_id)
-    if program is None:
+    if program is None or program.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Referral not found")
     return _referral_payload(program, await referral_balances(session, program.id), settings)
 
@@ -552,7 +567,7 @@ async def update_referral(
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
     program = await session.get(ReferralProgram, referral_id)
-    if program is None:
+    if program is None or program.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Referral not found")
     changed = program.is_active != payload.is_active
     program.is_active = payload.is_active
@@ -571,14 +586,46 @@ async def update_referral(
 @router.get("/referrals/{referral_id}/stats")
 async def referral_stats(
     referral_id: int,
+    period: str = Query(default="month", pattern="^(day|week|month)$"),
     _: AdminPrincipal = Depends(current_principal),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
     program = await session.get(ReferralProgram, referral_id)
-    if program is None:
+    if program is None or program.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Referral not found")
     value = await referral_balances(session, program.id)
+    attached_users = int(
+        await session.scalar(
+            select(func.count())
+            .select_from(UserReferral)
+            .where(UserReferral.referral_program_id == program.id)
+        )
+        or 0
+    )
+    commissions = list(
+        await session.scalars(
+            select(ReferralCommission).where(
+                ReferralCommission.referral_program_id == program.id,
+                ReferralCommission.status == "earned",
+                ReferralCommission.reversal_of_id.is_(None),
+            )
+        )
+    )
+    series_values: dict[str, int] = {}
+    for commission in commissions:
+        timestamp = commission.created_at
+        stamp = (
+            timestamp.replace(tzinfo=UTC) if timestamp.tzinfo is None else timestamp.astimezone(UTC)
+        )
+        if period == "month":
+            key = stamp.strftime("%Y-%m")
+        elif period == "week":
+            key = (stamp.date() - timedelta(days=stamp.weekday())).isoformat()
+        else:
+            key = stamp.date().isoformat()
+        series_values[key] = series_values.get(key, 0) + commission.commission_amount_cents
     return {
+        "attached_users": attached_users,
         "pending_cents": value.pending_cents,
         "earned_cents": value.earned_cents,
         "available_cents": value.available_cents,
@@ -586,6 +633,60 @@ async def referral_stats(
         "paid_cents": value.paid_cents,
         "reversed_cents": value.reversed_cents,
         "currency": "EUR",
+        "income_series": [
+            {"key": key, "amount_cents": amount} for key, amount in sorted(series_values.items())
+        ],
+    }
+
+
+@router.get("/referrals/{referral_id}/purchases")
+async def referral_purchases(
+    referral_id: int,
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    _: AdminPrincipal = Depends(current_principal),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    program = await session.get(ReferralProgram, referral_id)
+    if program is None or program.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Referral not found")
+    statement = (
+        select(ReferralCommission, Purchase, User, SubscriptionPlan)
+        .join(Purchase, Purchase.id == ReferralCommission.purchase_id)
+        .join(User, User.id == Purchase.user_id)
+        .join(SubscriptionPlan, SubscriptionPlan.id == Purchase.subscription_plan_id)
+        .where(
+            ReferralCommission.referral_program_id == program.id,
+            ReferralCommission.purchase_id.is_not(None),
+        )
+    )
+    total = int(await session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
+    rows = (
+        await session.execute(
+            statement.order_by(Purchase.purchased_at.desc(), Purchase.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    return {
+        "items": [
+            {
+                "username": f"@{user.telegram_username}" if user.telegram_username else None,
+                "purchased_at": purchase.purchased_at,
+                "plan": plan.name,
+                "amount_cents": purchase.amount_cents,
+                "commission_cents": commission.commission_amount_cents,
+                "currency": commission.currency,
+                "status": commission.status,
+            }
+            for commission, purchase, user, plan in rows
+        ],
+        "meta": {
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+            "pages": max(1, (total + page_size - 1) // page_size),
+        },
     }
 
 
@@ -595,6 +696,9 @@ async def referral_payouts(
     _: AdminPrincipal = Depends(current_principal),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
+    program = await session.get(ReferralProgram, referral_id)
+    if program is None or program.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Referral not found")
     values = list(
         await session.scalars(
             select(ReferralPayout)
@@ -626,7 +730,7 @@ async def admin_request_payout(
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
     program = await session.get(ReferralProgram, referral_id)
-    if program is None:
+    if program is None or program.deleted_at is not None:
         raise HTTPException(status_code=404, detail="Referral not found")
     try:
         payout = await request_payout(
@@ -648,6 +752,24 @@ async def admin_request_payout(
             },
         ) from error
     return {"id": payout.id, "status": payout.status, "amount_cents": payout.amount_cents}
+
+
+@router.delete("/referrals/{referral_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_referral(
+    referral_id: int,
+    principal: AdminPrincipal = Depends(superadmin_principal),
+    _: AdminPrincipal = Depends(csrf_protected),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    program = await session.get(ReferralProgram, referral_id)
+    if program is None or program.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Referral not found")
+    program.deleted_at = datetime.now(UTC)
+    program.deleted_by_admin_id = principal.admin_id
+    program.is_active = False
+    await _audit(session, principal, "referral_deleted", "referral_program", str(program.id))
+    await session.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/referral-payouts/{payout_id}/approve")

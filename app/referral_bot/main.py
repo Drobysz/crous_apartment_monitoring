@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.admin.security import normalize_username
 from app.core.config import get_settings
+from app.core.i18n import detect_language, i18n
 from app.db.models import ReferralProgram
 from app.db.session import SessionLocal
 from app.referrals.service import bind_owner, issue_owner_login_token
@@ -20,28 +21,51 @@ def build_router() -> Router:
 
     @router.message(Command("start"))
     async def start(message: Message) -> None:
-        if message.from_user is None or not message.from_user.username:
-            await message.answer("Set a Telegram username and send /start again.")
+        if message.from_user is None:
             return
-        _, key = normalize_username(message.from_user.username)
+        language = detect_language(message.from_user.language_code)
         async with SessionLocal() as session:
+            # Numeric Telegram identity is authoritative once a program has been bound.
             program = await session.scalar(
-                select(ReferralProgram).where(ReferralProgram.owner_username_key == key)
+                select(ReferralProgram).where(
+                    ReferralProgram.owner_telegram_user_id == message.from_user.id,
+                    ReferralProgram.deleted_at.is_(None),
+                    ReferralProgram.is_active.is_(True),
+                )
             )
+            if program is None and message.from_user.username:
+                try:
+                    _, key = normalize_username(message.from_user.username)
+                except ValueError:
+                    key = None
+                if key is not None:
+                    program = await session.scalar(
+                        select(ReferralProgram).where(
+                            ReferralProgram.owner_username_key == key,
+                            ReferralProgram.owner_telegram_user_id.is_(None),
+                            ReferralProgram.deleted_at.is_(None),
+                            ReferralProgram.is_active.is_(True),
+                        )
+                    )
             if program is None or not await bind_owner(session, program, message.from_user.id):
-                await message.answer("No referral program is linked to this Telegram account.")
+                await message.answer(i18n.text(language, "referral-owner-not-found"))
                 return
             settings = get_settings()
             if settings.referral_stats_base_url is None:
-                await message.answer("Referral statistics are not configured yet.")
+                await message.answer(i18n.text(language, "referral-owner-unavailable"))
                 return
             token = await issue_owner_login_token(
                 session, program, settings.referral_login_token_ttl_minutes
             )
             await session.commit()
-        url = f"{str(settings.referral_stats_base_url).rstrip('/')}?{urlencode({'token': token})}"
+        url = f"{str(settings.referral_stats_base_url).rstrip('/')}/referral/dashboard?{urlencode({'token': token})}"
         await message.answer(
-            f"Open your secure referral statistics link (valid for {settings.referral_login_token_ttl_minutes} minutes): {url}"
+            i18n.text(
+                language,
+                "referral-owner-dashboard-link",
+                url=url,
+                minutes=settings.referral_login_token_ttl_minutes,
+            )
         )
 
     return router

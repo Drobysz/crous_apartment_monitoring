@@ -58,6 +58,15 @@ unsubscribed-digest = 🚨 Still looking for CROUS housing? {total_today} were d
 New places appeared especially in: {top_departments}
 
 Your personalised alerts are paused. Activate a subscription to receive matching housing in real time.
+referral-owner-not-found = No referral account is associated with your Telegram account.
+
+Please contact support if you believe this is a mistake.
+referral-owner-unavailable = Referral statistics are not configured yet.
+referral-owner-dashboard-link = Your referral dashboard:
+
+{url}
+
+This link is valid for {minutes} minutes.
 list-loading = Loading current apartments…
 invalid-location-area = The selected area is invalid. Choose it again.
 list-current = The list is already up to date.
