@@ -115,3 +115,22 @@ class TransactionPageResponse(BaseModel):
 class TransactionDetailsResponse(TransactionResponse):
     processed_at: datetime | None
     user_id: int
+
+
+class ReportResponse(BaseModel):
+    id: int
+    user_id: int
+    username: str | None
+    preview: str
+    created_at: datetime
+
+
+class ReportPageResponse(BaseModel):
+    items: list[ReportResponse]
+    meta: PageMeta
+
+
+class ReportDetailsResponse(ReportResponse):
+    text: str
+    platform: str | None
+    platform_user_id: int | None

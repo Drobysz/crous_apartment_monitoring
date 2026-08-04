@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     telegram_bot_token: SecretStr | None = None
     notification_bot_token: SecretStr | None = None
+    discord_bot_token: SecretStr | None = None
+    discord_application_id: int | None = None
+    # Optional development-only guild for immediate slash-command registration.
+    discord_guild_id: int | None = None
     database_url: str = "postgresql+asyncpg://crous:crous@localhost:5432/crous"
     redis_url: str = "redis://localhost:6379/0"
     run_mode: str = "webhook"
@@ -69,8 +73,14 @@ class Settings(BaseSettings):
         if not isinstance(value, str):
             raise ValueError("path prefixes must be strings")
         candidate = value.strip()
-        if not candidate or "://" in candidate or any(part in candidate for part in ("?", "#", "..")):
-            raise ValueError("path prefixes must be local paths without queries, fragments, or traversal")
+        if (
+            not candidate
+            or "://" in candidate
+            or any(part in candidate for part in ("?", "#", ".."))
+        ):
+            raise ValueError(
+                "path prefixes must be local paths without queries, fragments, or traversal"
+            )
         normalized = "/" + candidate.lstrip("/")
         return normalized.rstrip("/") or "/"
 
@@ -89,14 +99,26 @@ class Settings(BaseSettings):
         values = list(paths.items())
         for index, (name, path) in enumerate(values):
             for other_name, other_path in values[index + 1 :]:
-                if path == other_path or path.startswith(other_path + "/") or other_path.startswith(path + "/"):
+                if (
+                    path == other_path
+                    or path.startswith(other_path + "/")
+                    or other_path.startswith(path + "/")
+                ):
                     raise ValueError(f"{name} conflicts with {other_name}")
         return self
 
-    def is_developer(self, telegram_user_id: int) -> bool:
-        return self.test_mode and telegram_user_id in {
-            int(value) for value in self.developer_telegram_ids.split(",") if value.strip().isdigit()
-        }
+    def is_developer(self, telegram_user_id: int | None) -> bool:
+        return (
+            self.test_mode
+            and telegram_user_id is not None
+            and telegram_user_id
+            in {
+                int(value)
+                for value in self.developer_telegram_ids.split(",")
+                if value.strip().isdigit()
+            }
+        )
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -35,8 +35,8 @@ class Timestamped:
 class User(Timestamped, Base):
     __tablename__ = "users"
     id: Mapped[int] = mapped_column(primary_key=True)
-    telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
-    telegram_chat_id: Mapped[int] = mapped_column(BigInteger)
+    telegram_user_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True)
+    telegram_chat_id: Mapped[int | None] = mapped_column(BigInteger)
     telegram_username: Mapped[str | None] = mapped_column(String(32), index=True)
     language: Mapped[str] = mapped_column(String(2), default="fr")
     telegram_language_code: Mapped[str | None] = mapped_column(String(16))
@@ -91,7 +91,9 @@ class Purchase(Timestamped, Base):
     __tablename__ = "purchases"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    subscription_plan_id: Mapped[int] = mapped_column(ForeignKey("subscription_plans.id"), index=True)
+    subscription_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("subscription_plans.id"), index=True
+    )
     stripe_checkout_session_id: Mapped[str] = mapped_column(String(255), unique=True)
     stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), index=True)
     stripe_event_id: Mapped[str | None] = mapped_column(String(255), unique=True)
@@ -106,8 +108,12 @@ class UserSubscription(Timestamped, Base):
     __tablename__ = "user_subscriptions"
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    subscription_plan_id: Mapped[int] = mapped_column(ForeignKey("subscription_plans.id"), index=True)
-    purchase_id: Mapped[int | None] = mapped_column(ForeignKey("purchases.id", ondelete="SET NULL"), unique=True)
+    subscription_plan_id: Mapped[int] = mapped_column(
+        ForeignKey("subscription_plans.id"), index=True
+    )
+    purchase_id: Mapped[int | None] = mapped_column(
+        ForeignKey("purchases.id", ondelete="SET NULL"), unique=True
+    )
     starts_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
     status: Mapped[str] = mapped_column(String(32), default="active", index=True)
@@ -124,7 +130,9 @@ class SearchDisplayGroup(Base):
 
     __tablename__ = "search_display_groups"
     id: Mapped[int] = mapped_column(primary_key=True)
-    search_id: Mapped[int] = mapped_column(ForeignKey("searches.id", ondelete="CASCADE"), index=True)
+    search_id: Mapped[int] = mapped_column(
+        ForeignKey("searches.id", ondelete="CASCADE"), index=True
+    )
     telegram_chat_id: Mapped[int] = mapped_column(BigInteger)
     fingerprint: Mapped[str] = mapped_column(String(64), index=True)
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
@@ -136,9 +144,13 @@ class SearchDisplayGroup(Base):
 
 class SearchDisplayMessage(Base):
     __tablename__ = "search_display_messages"
-    __table_args__ = (UniqueConstraint("display_group_id", "telegram_message_id", name="uq_display_message"),)
+    __table_args__ = (
+        UniqueConstraint("display_group_id", "telegram_message_id", name="uq_display_message"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
-    display_group_id: Mapped[int] = mapped_column(ForeignKey("search_display_groups.id", ondelete="CASCADE"), index=True)
+    display_group_id: Mapped[int] = mapped_column(
+        ForeignKey("search_display_groups.id", ondelete="CASCADE"), index=True
+    )
     telegram_message_id: Mapped[int] = mapped_column(BigInteger)
     message_kind: Mapped[str] = mapped_column(String(16), default="card")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -173,16 +185,28 @@ class Listing(Timestamped, Base):
     short_description: Mapped[str | None] = mapped_column(Text)
     primary_image_url: Mapped[str | None] = mapped_column(String(1024))
     raw_payload: Mapped[dict[str, Any]] = mapped_column(JSON)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class SearchListing(Base):
     __tablename__ = "search_listings"
-    search_id: Mapped[int] = mapped_column(ForeignKey("searches.id", ondelete="CASCADE"), primary_key=True)
-    listing_id: Mapped[int] = mapped_column(ForeignKey("listings.id", ondelete="CASCADE"), primary_key=True)
-    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    search_id: Mapped[int] = mapped_column(
+        ForeignKey("searches.id", ondelete="CASCADE"), primary_key=True
+    )
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("listings.id", ondelete="CASCADE"), primary_key=True
+    )
+    first_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
     disappeared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     reappeared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_currently_available: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -201,7 +225,9 @@ class ImageCache(Base):
     width: Mapped[int | None]
     height: Mapped[int | None]
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    last_used_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_used_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class Notification(Base):
@@ -218,23 +244,120 @@ class Notification(Base):
     error: Mapped[str | None] = mapped_column(Text)
 
 
-class HousingDailyStatistic(Base):
-    __tablename__ = "housing_daily_statistics"
-    __table_args__ = (UniqueConstraint("search_id", "statistic_date", name="uq_housing_daily_stat_search_date"),)
+class HousingFavorite(Base):
+    """A user-owned reference to a canonical housing listing."""
+
+    __tablename__ = "housing_favorites"
+    __table_args__ = (
+        UniqueConstraint("user_id", "listing_id", name="uq_housing_favorite_user_listing"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    search_id: Mapped[int] = mapped_column(ForeignKey("searches.id", ondelete="CASCADE"), index=True)
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("listings.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FavoriteAvailabilityState(Base):
+    """Last completed availability observation for one favourite in one search."""
+
+    __tablename__ = "favorite_availability_states"
+    __table_args__ = (
+        UniqueConstraint("favorite_id", "search_id", name="uq_favorite_availability_search"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    favorite_id: Mapped[int] = mapped_column(
+        ForeignKey("housing_favorites.id", ondelete="CASCADE"), index=True
+    )
+    search_id: Mapped[int] = mapped_column(
+        ForeignKey("searches.id", ondelete="CASCADE"), index=True
+    )
+    is_available: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    transition_sequence: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class FavoriteTransitionEvent(Base):
+    """Transactional, de-duplicated outbox event for a favourite availability change."""
+
+    __tablename__ = "favorite_transition_events"
+    __table_args__ = (
+        UniqueConstraint(
+            "availability_state_id", "transition_sequence", name="uq_favorite_transition_sequence"
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    availability_state_id: Mapped[int] = mapped_column(
+        ForeignKey("favorite_availability_states.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("listings.id", ondelete="CASCADE"), index=True
+    )
+    transition: Mapped[str] = mapped_column(String(16))
+    transition_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+
+class UserPlatformAccount(Timestamped, Base):
+    """Platform identity namespace; legacy Telegram columns on users remain compatible."""
+
+    __tablename__ = "user_platform_accounts"
+    __table_args__ = (
+        UniqueConstraint("platform", "platform_user_id", name="uq_user_platform_account"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    platform: Mapped[str] = mapped_column(String(16))
+    platform_user_id: Mapped[int] = mapped_column(BigInteger)
+    platform_chat_id: Mapped[int | None] = mapped_column(BigInteger)
+    platform_username: Mapped[str | None] = mapped_column(String(64), index=True)
+
+
+class UserReport(Base):
+    __tablename__ = "user_reports"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    platform_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user_platform_accounts.id", ondelete="SET NULL"), index=True
+    )
+    text: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+
+
+class HousingDailyStatistic(Base):
+    __tablename__ = "housing_daily_statistics"
+    __table_args__ = (
+        UniqueConstraint("search_id", "statistic_date", name="uq_housing_daily_stat_search_date"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    search_id: Mapped[int] = mapped_column(
+        ForeignKey("searches.id", ondelete="CASCADE"), index=True
+    )
     search_identifier: Mapped[str] = mapped_column(String(128))
     cheapest_price_cents: Mapped[int | None]
     highest_price_cents: Mapped[int | None]
     unique_apartment_count: Mapped[int] = mapped_column(Integer)
     statistic_date: Mapped[date] = mapped_column(Date, index=True)
-    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
 
 
 class FavoriteRestaurant(Timestamped, Base):
     __tablename__ = "favorite_restaurants"
-    __table_args__ = (UniqueConstraint("user_id", "restaurant_code", name="uq_favorite_restaurant_user_code"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "restaurant_code", name="uq_favorite_restaurant_user_code"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     restaurant_code: Mapped[int] = mapped_column(Integer)
@@ -247,21 +370,29 @@ class FavoriteRestaurant(Timestamped, Base):
 
 class RestaurantSubscription(Timestamped, Base):
     __tablename__ = "restaurant_subscriptions"
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    primary_restaurant_id: Mapped[int | None] = mapped_column(ForeignKey("favorite_restaurants.id", ondelete="SET NULL"), unique=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    primary_restaurant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("favorite_restaurants.id", ondelete="SET NULL"), index=True
+    )
     delivery_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     delivery_time: Mapped[time] = mapped_column(Time, default=lambda: time(hour=8))
 
 
 class RestaurantMenuDelivery(Base):
     __tablename__ = "restaurant_menu_deliveries"
-    __table_args__ = (UniqueConstraint("user_id", "delivery_date", name="uq_restaurant_delivery_user_date"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "delivery_date", name="uq_restaurant_delivery_user_date"),
+    )
     id: Mapped[int] = mapped_column(primary_key=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    favorite_restaurant_id: Mapped[int | None] = mapped_column(ForeignKey("favorite_restaurants.id", ondelete="SET NULL"), index=True)
+    favorite_restaurant_id: Mapped[int | None] = mapped_column(
+        ForeignKey("favorite_restaurants.id", ondelete="SET NULL"), index=True
+    )
     delivery_date: Mapped[date] = mapped_column(Date, index=True)
     scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    telegram_message_id: Mapped[int | None]
+    telegram_message_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="pending")
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -304,7 +435,9 @@ class AdminSession(Base):
 class AdminAudit(Base):
     __tablename__ = "admin_audits"
     id: Mapped[int] = mapped_column(primary_key=True)
-    actor_admin_id: Mapped[int | None] = mapped_column(ForeignKey("admins.id", ondelete="SET NULL"), index=True)
+    actor_admin_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admins.id", ondelete="SET NULL"), index=True
+    )
     action: Mapped[str] = mapped_column(String(64), index=True)
     target_type: Mapped[str] = mapped_column(String(64))
     target_id: Mapped[str | None] = mapped_column(String(64))
@@ -317,6 +450,8 @@ class AdminNotificationChat(Timestamped, Base):
 
     __tablename__ = "admin_notification_chats"
     id: Mapped[int] = mapped_column(primary_key=True)
-    admin_id: Mapped[int] = mapped_column(ForeignKey("admins.id", ondelete="CASCADE"), unique=True, index=True)
+    admin_id: Mapped[int] = mapped_column(
+        ForeignKey("admins.id", ondelete="CASCADE"), unique=True, index=True
+    )
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     telegram_chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)

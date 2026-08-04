@@ -27,6 +27,8 @@ from app.admin.schemas import (
     DashboardResponse,
     LoginRequest,
     PaidUserPageResponse,
+    ReportDetailsResponse,
+    ReportPageResponse,
     TransactionDetailsResponse,
     TransactionPageResponse,
 )
@@ -48,9 +50,11 @@ from app.admin.service import (
     admin_response,
     list_admins,
     list_paid_users,
+    list_reports,
     list_transactions,
     paid_user_details,
     recent_buyers,
+    report_details,
     revenue_dashboard,
     transaction_details,
 )
@@ -86,7 +90,9 @@ def _set_session_cookies(response: Response, tokens: SessionTokens, settings: Se
     secure = _cookie_secure(settings)
     common = {"secure": secure, "samesite": "strict", "path": "/"}
     response.set_cookie(ACCESS_COOKIE, access, httponly=True, expires=access_expires_at, **common)
-    response.set_cookie(REFRESH_COOKIE, refresh, httponly=True, expires=refresh_expires_at, **common)
+    response.set_cookie(
+        REFRESH_COOKIE, refresh, httponly=True, expires=refresh_expires_at, **common
+    )
     response.set_cookie(CSRF_COOKIE, csrf, httponly=False, expires=refresh_expires_at, **common)
 
 
@@ -108,9 +114,13 @@ async def current_principal(
         raise _http_auth_error() from error
 
 
-async def superadmin_principal(principal: AdminPrincipal = Depends(current_principal)) -> AdminPrincipal:
+async def superadmin_principal(
+    principal: AdminPrincipal = Depends(current_principal),
+) -> AdminPrincipal:
     if principal.role != "superadmin":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Superadmin access is required")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, detail="Superadmin access is required"
+        )
     return principal
 
 
@@ -122,7 +132,9 @@ async def csrf_protected(
     settings: Settings = Depends(get_settings),
 ) -> AdminPrincipal:
     expected_origin = str(settings.public_base_url).rstrip("/")
-    if request.headers.get("origin") != expected_origin or not await csrf_is_valid(session, principal, csrf_token):
+    if request.headers.get("origin") != expected_origin or not await csrf_is_valid(
+        session, principal, csrf_token
+    ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
     return principal
 
@@ -157,18 +169,28 @@ async def login(
     forwarded_for = request.headers.get("x-forwarded-for", "").split(",", 1)[0].strip()
     client_key = forwarded_for or (request.client.host if request.client else "unknown")
     if not login_rate_limiter.allow(client_key):
-        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many sign-in attempts")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many sign-in attempts"
+        )
     try:
         _, username_key = normalize_username(payload.username)
     except ValueError:
         username_key = "invalid"
     admin = await session.scalar(select(Admin).where(Admin.username_key == username_key))
-    if admin is None or not admin.is_active or not await verify_password(payload.password, admin.password_hash if admin else None):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
+    if (
+        admin is None
+        or not admin.is_active
+        or not await verify_password(payload.password, admin.password_hash if admin else None)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password"
+        )
     try:
         tokens = await create_session(session, admin, settings)
     except AuthenticationError as error:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Admin sessions are unavailable") from error
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Admin sessions are unavailable"
+        ) from error
     admin.last_login_at = datetime.now(UTC)
     await session.commit()
     _set_session_cookies(response, tokens, settings)
@@ -184,7 +206,10 @@ async def refresh(
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> dict[str, object]:
-    if request.headers.get("origin") != str(settings.public_base_url).rstrip("/") or not refresh_token:
+    if (
+        request.headers.get("origin") != str(settings.public_base_url).rstrip("/")
+        or not refresh_token
+    ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
     if not await refresh_csrf_is_valid(session, refresh_token, csrf_token):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF validation failed")
@@ -240,7 +265,9 @@ async def dashboard_recent_buyers(
     _: AdminPrincipal = Depends(current_principal),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, object]:
-    return {"items": [buyer.model_dump(mode="json") for buyer in await recent_buyers(session, limit)]}
+    return {
+        "items": [buyer.model_dump(mode="json") for buyer in await recent_buyers(session, limit)]
+    }
 
 
 @router.get("/admins", response_model=AdminPageResponse)
@@ -266,11 +293,22 @@ async def create_admin(
         username, username_key = normalize_username(payload.username)
         password_hash = await hash_password(payload.password)
     except (ValueError, PasswordPolicyError) as error:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
+        ) from error
     existing = await session.scalar(select(Admin.id).where(Admin.username_key == username_key))
     if existing is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An administrator with this username already exists")
-    admin = Admin(name=payload.name.strip(), username=username, username_key=username_key, password_hash=password_hash, role=payload.role)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An administrator with this username already exists",
+        )
+    admin = Admin(
+        name=payload.name.strip(),
+        username=username,
+        username_key=username_key,
+        password_hash=password_hash,
+        role=payload.role,
+    )
     session.add(admin)
     await session.flush()
     await _audit(session, principal, "admin.created", "admin", str(admin.id), {"role": admin.role})
@@ -290,16 +328,27 @@ async def update_admin(
     if admin is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Administrator not found")
     if admin.id == principal.admin_id and payload.role is not None and payload.role != admin.role:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Administrators cannot change their own role")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Administrators cannot change their own role",
+        )
     removing_superadmin = admin.role == "superadmin" and (
         payload.role == "admin" or payload.is_active is False
     )
     if removing_superadmin:
         active_superadmins = int(
-            await session.scalar(select(func.count()).select_from(Admin).where(Admin.role == "superadmin", Admin.is_active.is_(True))) or 0
+            await session.scalar(
+                select(func.count())
+                .select_from(Admin)
+                .where(Admin.role == "superadmin", Admin.is_active.is_(True))
+            )
+            or 0
         )
         if active_superadmins <= 1:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The last active superadmin cannot be changed or deactivated")
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The last active superadmin cannot be changed or deactivated",
+            )
     if payload.name is not None:
         admin.name = payload.name.strip()
     if payload.role is not None:
@@ -310,7 +359,9 @@ async def update_admin(
         try:
             admin.password_hash = await hash_password(payload.password)
         except PasswordPolicyError as error:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)) from error
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(error)
+            ) from error
     await _audit(session, principal, "admin.updated", "admin", str(admin.id))
     await session.commit()
     return AdminProfileResponse(**admin_response(admin).model_dump())
@@ -346,7 +397,9 @@ async def paid_user(
                 "id": search.id,
                 "location": search.location_display_name,
                 "is_active": search.is_active,
-                "last_checked_at": search.last_checked_at.isoformat() if search.last_checked_at else None,
+                "last_checked_at": search.last_checked_at.isoformat()
+                if search.last_checked_at
+                else None,
             }
             for search in searches
         ],
@@ -375,4 +428,30 @@ async def transaction(
     if result is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Transaction not found")
     item, purchase = result
-    return TransactionDetailsResponse(**item.model_dump(), processed_at=purchase.processed_at, user_id=purchase.user_id)
+    return TransactionDetailsResponse(
+        **item.model_dump(), processed_at=purchase.processed_at, user_id=purchase.user_id
+    )
+
+
+@router.get("/reports", response_model=ReportPageResponse)
+async def reports(
+    q: str | None = Query(default=None, max_length=100),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=20, ge=1, le=100),
+    _: AdminPrincipal = Depends(current_principal),
+    session: AsyncSession = Depends(get_session),
+) -> ReportPageResponse:
+    items, meta = await list_reports(session, q, page, page_size)
+    return ReportPageResponse(items=items, meta=meta)
+
+
+@router.get("/reports/{report_id}", response_model=ReportDetailsResponse)
+async def report(
+    report_id: int,
+    _: AdminPrincipal = Depends(current_principal),
+    session: AsyncSession = Depends(get_session),
+) -> ReportDetailsResponse:
+    item = await report_details(session, report_id)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
+    return item

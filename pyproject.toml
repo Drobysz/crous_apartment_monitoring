@@ -9,6 +9,7 @@ description = "Multilingual CROUS accommodation monitoring Telegram bot"
 requires-python = ">=3.12,<3.14"
 dependencies = [
   "aiogram>=3.30,<4",
+  "discord.py>=2.6,<3",
   "fastapi>=0.140.13,<0.141",
   "uvicorn[standard]>=0.52,<0.53",
   "sqlalchemy[asyncio]>=2.0.51,<2.1",

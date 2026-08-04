@@ -2,7 +2,12 @@ name: Quality
 
 on:
   pull_request:
+    branches: [main]
   push:
+    branches: [main]
+
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -30,7 +35,10 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           version: "0.12.0"
-      - run: uv sync --extra dev
-      - run: uv run --extra dev pytest
+          enable-cache: true
+      - run: uv sync --locked --extra dev
+      - run: uv run --extra dev ruff format --check .
       - run: uv run --extra dev ruff check .
       - run: uv run --extra dev mypy app
+      - run: uv run --extra dev pytest -m "not integration"
+      - run: uv run --extra dev pytest tests/integration/test_alembic_migrations.py -q

@@ -13,14 +13,27 @@ from app.admin.schemas import (
     DashboardResponse,
     PageMeta,
     PaidUserResponse,
+    ReportDetailsResponse,
+    ReportResponse,
     RevenuePoint,
     TransactionResponse,
 )
-from app.db.models import Admin, Purchase, Search, SubscriptionPlan, User, UserSubscription
+from app.db.models import (
+    Admin,
+    Purchase,
+    Search,
+    SubscriptionPlan,
+    User,
+    UserPlatformAccount,
+    UserReport,
+    UserSubscription,
+)
 
 
 def page_meta(page: int, page_size: int, total: int) -> PageMeta:
-    return PageMeta(page=page, page_size=page_size, total=total, pages=max(1, ceil(total / page_size)))
+    return PageMeta(
+        page=page, page_size=page_size, total=total, pages=max(1, ceil(total / page_size))
+    )
 
 
 def admin_response(admin: Admin) -> AdminResponse:
@@ -53,7 +66,9 @@ def _paid_purchase_conditions(start: datetime, end: datetime) -> tuple[object, .
 def _period_bounds(period: str, now: datetime) -> tuple[datetime, datetime, int, str]:
     today = now.date()
     if period == "week":
-        start = datetime.combine(today - timedelta(days=today.weekday()), datetime.min.time(), tzinfo=UTC)
+        start = datetime.combine(
+            today - timedelta(days=today.weekday()), datetime.min.time(), tzinfo=UTC
+        )
         return start, start + timedelta(days=7), 7, "day"
     if period == "year":
         start = datetime(now.year, 1, 1, tzinfo=UTC)
@@ -61,7 +76,9 @@ def _period_bounds(period: str, now: datetime) -> tuple[datetime, datetime, int,
     if period != "month":
         raise ValueError("period must be week, month, or year")
     start = datetime(now.year, now.month, 1, tzinfo=UTC)
-    end = datetime(now.year + (now.month == 12), 1 if now.month == 12 else now.month + 1, 1, tzinfo=UTC)
+    end = datetime(
+        now.year + (now.month == 12), 1 if now.month == 12 else now.month + 1, 1, tzinfo=UTC
+    )
     return start, end, (end.date() - start.date()).days, "day"
 
 
@@ -77,11 +94,18 @@ def _period_keys(start: datetime, count: int, kind: str) -> list[str]:
     current = start
     for _ in range(count):
         keys.append(current.strftime("%Y-%m"))
-        current = datetime(current.year + (current.month == 12), 1 if current.month == 12 else current.month + 1, 1, tzinfo=UTC)
+        current = datetime(
+            current.year + (current.month == 12),
+            1 if current.month == 12 else current.month + 1,
+            1,
+            tzinfo=UTC,
+        )
     return keys
 
 
-async def revenue_dashboard(session: AsyncSession, period: str, now: datetime | None = None) -> DashboardResponse:
+async def revenue_dashboard(
+    session: AsyncSession, period: str, now: datetime | None = None
+) -> DashboardResponse:
     now = now or datetime.now(UTC)
     start, end, bucket_count, bucket_kind = _period_bounds(period, now)
     total_users = int(await session.scalar(select(func.count()).select_from(User)) or 0)
@@ -99,18 +123,26 @@ async def revenue_dashboard(session: AsyncSession, period: str, now: datetime | 
         or 0
     )
     active_monitoring_anchors = int(
-        await session.scalar(select(func.count()).select_from(Search).where(Search.is_active.is_(True))) or 0
+        await session.scalar(
+            select(func.count()).select_from(Search).where(Search.is_active.is_(True))
+        )
+        or 0
     )
     paid_rows = (
         await session.execute(
-            select(Purchase.purchased_at, Purchase.amount_cents).where(*_paid_purchase_conditions(start, end))
+            select(Purchase.purchased_at, Purchase.amount_cents).where(
+                *_paid_purchase_conditions(start, end)
+            )
         )
     ).all()
     values: dict[str, int] = defaultdict(int)
     for purchased_at, amount_cents in paid_rows:
         if purchased_at is not None and amount_cents is not None:
             values[_period_key(purchased_at, bucket_kind)] += amount_cents
-    series = [RevenuePoint(key=key, amount_cents=values[key]) for key in _period_keys(start, bucket_count, bucket_kind)]
+    series = [
+        RevenuePoint(key=key, amount_cents=values[key])
+        for key in _period_keys(start, bucket_count, bucket_kind)
+    ]
     return DashboardResponse(
         total_users=total_users,
         active_paid_subscribers=active_paid_subscribers,
@@ -144,19 +176,29 @@ async def recent_buyers(session: AsyncSession, limit: int = 10) -> list[BuyerRes
     ]
 
 
-async def list_admins(session: AsyncSession, query: str | None, page: int, page_size: int) -> tuple[list[AdminResponse], PageMeta]:
+async def list_admins(
+    session: AsyncSession, query: str | None, page: int, page_size: int
+) -> tuple[list[AdminResponse], PageMeta]:
     statement: Select[tuple[Admin]] = select(Admin)
     if query:
         term = f"%{query.casefold()}%"
-        statement = statement.where(or_(func.lower(Admin.name).like(term), Admin.username_key.like(term)))
+        statement = statement.where(
+            or_(func.lower(Admin.name).like(term), Admin.username_key.like(term))
+        )
     total = int(await session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
     rows = (
-        await session.scalars(statement.order_by(Admin.created_at.desc(), Admin.id.desc()).offset((page - 1) * page_size).limit(page_size))
+        await session.scalars(
+            statement.order_by(Admin.created_at.desc(), Admin.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
     ).all()
     return [admin_response(admin) for admin in rows], page_meta(page, page_size, total)
 
 
-def _paid_user_statement(now: datetime, query: str | None) -> Select[tuple[UserSubscription, User, SubscriptionPlan, int, datetime | None]]:
+def _paid_user_statement(
+    now: datetime, query: str | None
+) -> Select[tuple[UserSubscription, User, SubscriptionPlan, int, datetime | None]]:
     ranking = (
         select(
             UserSubscription.id.label("subscription_id"),
@@ -183,7 +225,10 @@ def _paid_user_statement(now: datetime, query: str | None) -> Select[tuple[UserS
         .subquery()
     )
     last_payment = (
-        select(Purchase.user_id.label("user_id"), func.max(Purchase.purchased_at).label("last_payment_at"))
+        select(
+            Purchase.user_id.label("user_id"),
+            func.max(Purchase.purchased_at).label("last_payment_at"),
+        )
         .where(Purchase.status == "paid")
         .group_by(Purchase.user_id)
         .subquery()
@@ -227,7 +272,9 @@ def _paid_user_response(
     )
 
 
-async def list_paid_users(session: AsyncSession, query: str | None, page: int, page_size: int) -> tuple[list[PaidUserResponse], PageMeta]:
+async def list_paid_users(
+    session: AsyncSession, query: str | None, page: int, page_size: int
+) -> tuple[list[PaidUserResponse], PageMeta]:
     statement = _paid_user_statement(datetime.now(UTC), query)
     total = int(await session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
     rows = (
@@ -240,17 +287,29 @@ async def list_paid_users(session: AsyncSession, query: str | None, page: int, p
     return [_paid_user_response(*row) for row in rows], page_meta(page, page_size, total)
 
 
-async def paid_user_details(session: AsyncSession, user_id: int) -> tuple[PaidUserResponse, User, list[Search]] | None:
+async def paid_user_details(
+    session: AsyncSession, user_id: int
+) -> tuple[PaidUserResponse, User, list[Search]] | None:
     statement = _paid_user_statement(datetime.now(UTC), None).where(User.id == user_id)
     row = (await session.execute(statement)).first()
     if row is None:
         return None
     subscription, user, plan, active_count, last_payment_at = row
-    searches = (await session.scalars(select(Search).where(Search.user_id == user.id).order_by(Search.id.desc()))).all()
-    return _paid_user_response(subscription, user, plan, active_count, last_payment_at), user, list(searches)
+    searches = (
+        await session.scalars(
+            select(Search).where(Search.user_id == user.id).order_by(Search.id.desc())
+        )
+    ).all()
+    return (
+        _paid_user_response(subscription, user, plan, active_count, last_payment_at),
+        user,
+        list(searches),
+    )
 
 
-def transaction_response(purchase: Purchase, user: User, plan: SubscriptionPlan) -> TransactionResponse:
+def transaction_response(
+    purchase: Purchase, user: User, plan: SubscriptionPlan
+) -> TransactionResponse:
     return TransactionResponse(
         id=purchase.id,
         username=user_handle(user),
@@ -265,8 +324,14 @@ def transaction_response(purchase: Purchase, user: User, plan: SubscriptionPlan)
     )
 
 
-async def list_transactions(session: AsyncSession, query: str | None, page: int, page_size: int) -> tuple[list[TransactionResponse], PageMeta]:
-    statement = select(Purchase, User, SubscriptionPlan).join(User, User.id == Purchase.user_id).join(SubscriptionPlan, SubscriptionPlan.id == Purchase.subscription_plan_id)
+async def list_transactions(
+    session: AsyncSession, query: str | None, page: int, page_size: int
+) -> tuple[list[TransactionResponse], PageMeta]:
+    statement = (
+        select(Purchase, User, SubscriptionPlan)
+        .join(User, User.id == Purchase.user_id)
+        .join(SubscriptionPlan, SubscriptionPlan.id == Purchase.subscription_plan_id)
+    )
     if query:
         term = f"%{query.casefold().lstrip('@')}%"
         statement = statement.where(
@@ -279,13 +344,17 @@ async def list_transactions(session: AsyncSession, query: str | None, page: int,
     total = int(await session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
     rows = (
         await session.execute(
-            statement.order_by(Purchase.created_at.desc(), Purchase.id.desc()).offset((page - 1) * page_size).limit(page_size)
+            statement.order_by(Purchase.created_at.desc(), Purchase.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
         )
     ).all()
     return [transaction_response(*row) for row in rows], page_meta(page, page_size, total)
 
 
-async def transaction_details(session: AsyncSession, transaction_id: int) -> tuple[TransactionResponse, Purchase] | None:
+async def transaction_details(
+    session: AsyncSession, transaction_id: int
+) -> tuple[TransactionResponse, Purchase] | None:
     row = (
         await session.execute(
             select(Purchase, User, SubscriptionPlan)
@@ -295,3 +364,64 @@ async def transaction_details(session: AsyncSession, transaction_id: int) -> tup
         )
     ).first()
     return (transaction_response(*row), row[0]) if row else None
+
+
+def report_preview(text: str) -> str:
+    return text if len(text) <= 20 else f"{text[:20]}…"
+
+
+def report_response(report: UserReport, user: User) -> ReportResponse:
+    return ReportResponse(
+        id=report.id,
+        user_id=user.id,
+        username=user_handle(user),
+        preview=report_preview(report.text),
+        created_at=report.created_at,
+    )
+
+
+async def list_reports(
+    session: AsyncSession, query: str | None, page: int, page_size: int
+) -> tuple[list[ReportResponse], PageMeta]:
+    statement = select(UserReport, User).join(User, User.id == UserReport.user_id)
+    if query:
+        term = f"%{query.casefold().lstrip('@')}%"
+        statement = statement.where(
+            or_(
+                func.lower(User.telegram_username).like(term),
+                func.lower(UserReport.text).like(term),
+            )
+        )
+    total = int(await session.scalar(select(func.count()).select_from(statement.subquery())) or 0)
+    rows = (
+        await session.execute(
+            statement.order_by(UserReport.created_at.desc(), UserReport.id.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+    ).all()
+    return [report_response(report, user) for report, user in rows], page_meta(
+        page, page_size, total
+    )
+
+
+async def report_details(session: AsyncSession, report_id: int) -> ReportDetailsResponse | None:
+    row = (
+        await session.execute(
+            select(UserReport, User, UserPlatformAccount)
+            .join(User, User.id == UserReport.user_id)
+            .outerjoin(
+                UserPlatformAccount, UserPlatformAccount.id == UserReport.platform_account_id
+            )
+            .where(UserReport.id == report_id)
+        )
+    ).first()
+    if row is None:
+        return None
+    report, user, account = row
+    return ReportDetailsResponse(
+        **report_response(report, user).model_dump(),
+        text=report.text,
+        platform=account.platform if account else None,
+        platform_user_id=account.platform_user_id if account else None,
+    )

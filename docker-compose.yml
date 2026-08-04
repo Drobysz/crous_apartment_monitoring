@@ -24,6 +24,7 @@ services:
 
   migrate:
     build: .
+    image: ${CROUS_IMAGE:-crous-monitoring:local}
     env_file:
       - .env
     command: alembic upgrade head
@@ -34,6 +35,7 @@ services:
 
   app:
     build: .
+    image: ${CROUS_IMAGE:-crous-monitoring:local}
     env_file: .env
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     expose: ["8000"]
@@ -45,6 +47,7 @@ services:
 
   api:
     build: .
+    image: ${CROUS_IMAGE:-crous-monitoring:local}
     env_file: .env
     command: uvicorn app.api_main:app --host 0.0.0.0 --port 8000
     expose: ["8000"]
@@ -54,6 +57,7 @@ services:
 
   admin_panel:
     build: .
+    image: ${CROUS_IMAGE:-crous-monitoring:local}
     env_file:
       - .env
     command: uvicorn app.admin_main:app --host 0.0.0.0 --port 8000
@@ -64,12 +68,14 @@ services:
 
   next_app:
     build: ./web_app
+    image: ${CROUS_WEB_IMAGE:-crous-monitoring-web:local}
     env_file: .env
     expose: ["3000"]
     networks: [crous_internal]
 
   worker:
     build: .
+    image: ${CROUS_IMAGE:-crous-monitoring:local}
     env_file: .env
     command: arq app.workers.tasks.WorkerSettings
     depends_on:
@@ -80,10 +86,23 @@ services:
 
   notification_bot:
     build: .
+    image: ${CROUS_IMAGE:-crous-monitoring:local}
     env_file: .env
     command: uvicorn app.notification_bot.main:app --host 0.0.0.0 --port 8000
     expose: ["8000"]
     depends_on:
+      migrate: {condition: service_completed_successfully}
+    networks: [crous_internal]
+
+  discord_bot:
+    build: .
+    image: ${CROUS_IMAGE:-crous-monitoring:local}
+    env_file: .env
+    command: python -m app.discord_bot.main
+    profiles: [discord]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
     networks: [crous_internal]
 

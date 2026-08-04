@@ -21,7 +21,7 @@ pytestmark = pytest.mark.integration
 BASE = "20260729_01_base"
 ADMIN = "20260729_02_admin"
 FILTERS = "20260729_03_filters"
-HEAD = "20260803_05_resto"
+HEAD = "20260804_07_favorites_reports"
 
 EXPECTED_TABLES = {
     "admin_audits",
@@ -31,6 +31,7 @@ EXPECTED_TABLES = {
     "alembic_version",
     "geocoding_cache",
     "housing_daily_statistics",
+    "housing_favorites",
     "image_cache",
     "listings",
     "notifications",
@@ -40,11 +41,15 @@ EXPECTED_TABLES = {
     "search_listings",
     "searches",
     "favorite_restaurants",
+    "favorite_availability_states",
+    "favorite_transition_events",
     "restaurant_menu_deliveries",
     "restaurant_subscriptions",
     "subscription_plans",
     "user_subscriptions",
     "users",
+    "user_platform_accounts",
+    "user_reports",
 }
 
 
@@ -58,15 +63,23 @@ async def _schema_snapshot(
     engine = create_async_engine(database_url)
     try:
         async with engine.connect() as connection:
-            table_names = await connection.run_sync(lambda sync: set(inspect(sync).get_table_names()))
+            table_names = await connection.run_sync(
+                lambda sync: set(inspect(sync).get_table_names())
+            )
             search_columns = await connection.run_sync(
                 lambda sync: {column["name"] for column in inspect(sync).get_columns("searches")}
             )
             user_columns = await connection.run_sync(
                 lambda sync: {column["name"] for column in inspect(sync).get_columns("users")}
             )
-            plans = (await connection.execute(text("SELECT code, price_cents FROM subscription_plans ORDER BY code"))).all()
-            version = (await connection.execute(text("SELECT version_num FROM alembic_version"))).scalar_one_or_none()
+            plans = (
+                await connection.execute(
+                    text("SELECT code, price_cents FROM subscription_plans ORDER BY code")
+                )
+            ).all()
+            version = (
+                await connection.execute(text("SELECT version_num FROM alembic_version"))
+            ).scalar_one_or_none()
     finally:
         await engine.dispose()
     return table_names, search_columns, user_columns, plans, version
@@ -93,7 +106,9 @@ def test_full_migration_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
         command.downgrade(config, "base")
 
         command.upgrade(config, BASE)
-        tables, search_columns, user_columns, plans, version = asyncio.run(_schema_snapshot(database_url))
+        tables, search_columns, user_columns, plans, version = asyncio.run(
+            _schema_snapshot(database_url)
+        )
         assert "searches" in tables
         assert "admins" not in tables
         assert "admin_notification_chats" not in tables

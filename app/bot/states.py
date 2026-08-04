@@ -16,3 +16,7 @@ class FilterFlow(StatesGroup):
 class RestaurantFlow(StatesGroup):
     city_input = State()
     location_input = State()
+
+
+class ReportFlow(StatesGroup):
+    text_input = State()

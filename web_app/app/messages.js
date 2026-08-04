@@ -26,6 +26,11 @@ const preferenceMessages = {
 
 for (const [locale, copy] of Object.entries(preferenceMessages)) Object.assign(messages[locale], copy);
 
+Object.assign(messages.en, {
+  reports: "Reports", report: "Report", submitted: "Submitted", preview: "Preview",
+  user: "User", platform: "Platform", fullReport: "Full report"
+});
+
 export function resolveLocale(input) {
   const candidate = (input || "en").toLowerCase().split("-")[0];
   return localeCodes.includes(candidate) ? candidate : "en";

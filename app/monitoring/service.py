@@ -15,8 +15,14 @@ from app.core.i18n import i18n
 from app.crous.client import CrousClient
 from app.crous.models import Bounds
 from app.db.models import Search, SearchDisplayGroup, SearchDisplayMessage, User
+from app.favourites.service import (
+    dispatch_pending_transitions,
+    favorite_listing_ids,
+    record_completed_snapshot_transitions,
+)
 from app.images.downloader import SafeImageDownloader
-from app.notifications.service import apply_snapshot
+from app.notifications.service import apply_snapshot, upsert_listing
+from app.notifications.telegram import TelegramNotificationGateway
 from app.searches.filters import listing_matches_filters
 from app.searches.service import validate_bounds
 
@@ -39,7 +45,11 @@ async def _active_group(session: AsyncSession, search_id: int) -> SearchDisplayG
 
 async def _cleanup_group(bot: Bot, session: AsyncSession, group: SearchDisplayGroup) -> bool:
     """Delete tracked cards best-effort; retain transient failures for retry."""
-    messages = (await session.scalars(select(SearchDisplayMessage).where(SearchDisplayMessage.display_group_id == group.id))).all()
+    messages = (
+        await session.scalars(
+            select(SearchDisplayMessage).where(SearchDisplayMessage.display_group_id == group.id)
+        )
+    ).all()
     complete = True
     for message in messages:
         try:
@@ -66,12 +76,14 @@ async def _cleanup_group(bot: Bot, session: AsyncSession, group: SearchDisplayGr
 
 
 async def recover_incomplete_groups(bot: Bot, session: AsyncSession, search_id: int) -> None:
-    pending = (await session.scalars(
-        select(SearchDisplayGroup).where(
-            SearchDisplayGroup.search_id == search_id,
-            SearchDisplayGroup.status.in_(("pending", "failed", "retiring")),
+    pending = (
+        await session.scalars(
+            select(SearchDisplayGroup).where(
+                SearchDisplayGroup.search_id == search_id,
+                SearchDisplayGroup.status.in_(("pending", "failed", "retiring")),
+            )
         )
-    )).all()
+    ).all()
     for group in pending:
         await _cleanup_group(bot, session, group)
 
@@ -97,12 +109,26 @@ async def synchronize_search(
         user = await session.get(User, search.user_id)
         if user is None or user.is_blocked:
             return "inactive"
-        bounds = validate_bounds(Bounds(search.bounds_west, search.bounds_north, search.bounds_east, search.bounds_south))
-        logger.info("search_sync_fetch_started", correlation_id=correlation_id, search_id=search.id, user_id=user.telegram_user_id)
+        bounds = validate_bounds(
+            Bounds(search.bounds_west, search.bounds_north, search.bounds_east, search.bounds_south)
+        )
+        logger.info(
+            "search_sync_fetch_started",
+            correlation_id=correlation_id,
+            search_id=search.id,
+            user_id=user.telegram_user_id,
+        )
         raw_items = await crous.search(bounds, correlation_id=correlation_id)
         filtered_items = [item for item in raw_items if listing_matches_filters(item, search)]
         items, fingerprint = canonical_snapshot(filtered_items)
-        logger.info("search_sync_fetch_completed", correlation_id=correlation_id, search_id=search.id, raw_count=len(raw_items), listing_count=len(items), fingerprint=fingerprint)
+        logger.info(
+            "search_sync_fetch_completed",
+            correlation_id=correlation_id,
+            search_id=search.id,
+            raw_count=len(raw_items),
+            listing_count=len(items),
+            fingerprint=fingerprint,
+        )
 
         await recover_incomplete_groups(bot, session, search.id)
         active = await _active_group(session, search.id)
@@ -113,11 +139,17 @@ async def synchronize_search(
             # the persisted metadata fresh nevertheless: it lets previously
             # saved listings recover when a corrected public image route is
             # discovered.
-            await apply_snapshot(session, search, items)
+            current_listing_ids = await apply_snapshot(session, search, items)
+            await record_completed_snapshot_transitions(session, search, current_listing_ids)
             search.last_checked_at = search.last_success_at = now
             search.consecutive_errors = 0
             await session.commit()
-            logger.info("search_snapshot_unchanged", correlation_id=correlation_id, search_id=search.id, fingerprint=fingerprint)
+            logger.info(
+                "search_snapshot_unchanged",
+                correlation_id=correlation_id,
+                search_id=search.id,
+                fingerprint=fingerprint,
+            )
             return "unchanged"
 
         pending = SearchDisplayGroup(
@@ -128,24 +160,59 @@ async def synchronize_search(
             status="pending",
         )
         session.add(pending)
+        # Resolve canonical IDs before rendering so card actions never use a title.
+        listing_ids = {item.external_id: (await upsert_listing(session, item)).id for item in items}
+        saved_listing_ids = await favorite_listing_ids(session, user.id)
         await session.commit()
 
         try:
             if items:
                 crous_settings = getattr(crous, "settings", None)
                 downloader = (
-                    SafeImageDownloader({str(crous_settings.crous_base_url.host)}, crous_settings.max_image_bytes)
+                    SafeImageDownloader(
+                        {str(crous_settings.crous_base_url.host)}, crous_settings.max_image_bytes
+                    )
                     if crous_settings is not None
                     else None
                 )
                 for item in items:
-                    message_id = await send_accommodation_card(bot, user.telegram_chat_id, item, user.language, now, downloader=downloader)
-                    session.add(SearchDisplayMessage(display_group_id=pending.id, telegram_message_id=message_id, message_kind="card"))
+                    listing_id = listing_ids[item.external_id]
+                    message_id = await send_accommodation_card(
+                        bot,
+                        user.telegram_chat_id,
+                        item,
+                        user.language,
+                        now,
+                        downloader=downloader,
+                        listing_id=listing_id,
+                        is_favorite=listing_id in saved_listing_ids,
+                    )
+                    session.add(
+                        SearchDisplayMessage(
+                            display_group_id=pending.id,
+                            telegram_message_id=message_id,
+                            message_kind="card",
+                        )
+                    )
                     await session.commit()  # recoverable even if the process exits mid-group
-                    logger.info("search_display_card_sent", correlation_id=correlation_id, search_id=search.id, message_id=message_id, external_id=item.external_id)
+                    logger.info(
+                        "search_display_card_sent",
+                        correlation_id=correlation_id,
+                        search_id=search.id,
+                        message_id=message_id,
+                        external_id=item.external_id,
+                    )
             else:
-                empty = await bot.send_message(user.telegram_chat_id, i18n.text(user.language, "no-listings"))
-                session.add(SearchDisplayMessage(display_group_id=pending.id, telegram_message_id=empty.message_id, message_kind="empty"))
+                empty = await bot.send_message(
+                    user.telegram_chat_id, i18n.text(user.language, "no-listings")
+                )
+                session.add(
+                    SearchDisplayMessage(
+                        display_group_id=pending.id,
+                        telegram_message_id=empty.message_id,
+                        message_kind="empty",
+                    )
+                )
                 await session.commit()
         except Exception as error:
             await _cleanup_group(bot, session, pending)
@@ -156,7 +223,8 @@ async def synchronize_search(
             raise SnapshotDeliveryError(str(error)) from error
 
         # New messages are known to exist before the old group is retired.
-        await apply_snapshot(session, search, items)
+        current_listing_ids = await apply_snapshot(session, search, items)
+        await record_completed_snapshot_transitions(session, search, current_listing_ids)
         pending.status, pending.activated_at = "active", now
         if active:
             active.status, active.retired_at = "retiring", now
@@ -164,7 +232,16 @@ async def synchronize_search(
         search.last_checked_at = search.last_success_at = search.last_changed_at = now
         search.consecutive_errors = 0
         await session.commit()
-        logger.info("search_snapshot_activated", correlation_id=correlation_id, search_id=search.id, fingerprint=fingerprint, listing_count=len(items))
+        # Outbox delivery happens only after the completed snapshot is committed.
+        await dispatch_pending_transitions(session, TelegramNotificationGateway(bot))
+        await session.commit()
+        logger.info(
+            "search_snapshot_activated",
+            correlation_id=correlation_id,
+            search_id=search.id,
+            fingerprint=fingerprint,
+            listing_count=len(items),
+        )
 
         if active:
             await _cleanup_group(bot, session, active)

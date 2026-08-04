@@ -12,7 +12,7 @@ from app.bot.keyboards import main_menu
 from app.bot.navigation.manager import NavigationMessageManager
 from app.core.config import get_settings
 from app.core.i18n import i18n
-from app.db.models import Search, SearchListing, User
+from app.db.models import Search, SearchListing, User, UserPlatformAccount
 from app.subscriptions.service import get_effective_subscription
 
 
@@ -24,6 +24,7 @@ async def get_or_create_user(
     telegram_username: str | None = None,
 ) -> User:
     from app.core.i18n import detect_language
+
     user = await session.scalar(select(User).where(User.telegram_user_id == telegram_user_id))
     if user is None:
         user = User(
@@ -38,11 +39,32 @@ async def get_or_create_user(
     else:
         user.telegram_chat_id = chat_id
         user.telegram_username = telegram_username.casefold() if telegram_username else None
+    account = await session.scalar(
+        select(UserPlatformAccount).where(
+            UserPlatformAccount.platform == "telegram",
+            UserPlatformAccount.platform_user_id == telegram_user_id,
+        )
+    )
+    if account is None:
+        session.add(
+            UserPlatformAccount(
+                user_id=user.id,
+                platform="telegram",
+                platform_user_id=telegram_user_id,
+                platform_chat_id=chat_id,
+                platform_username=user.telegram_username,
+            )
+        )
+    else:
+        account.platform_chat_id = chat_id
+        account.platform_username = user.telegram_username
     return user
 
 
 async def latest_search(session: AsyncSession, user: User) -> Search | None:
-    return await session.scalar(select(Search).where(Search.user_id == user.id).order_by(Search.id.desc()))
+    return await session.scalar(
+        select(Search).where(Search.user_id == user.id).order_by(Search.id.desc())
+    )
 
 
 async def available_listing_count(session: AsyncSession, search: Search | None) -> int:
@@ -90,7 +112,9 @@ async def main_screen_text(session: AsyncSession, user: User, *, notice: str | N
                 "monitoring",
                 value=i18n.text(language, "enabled" if enabled else "disabled"),
             ),
-            i18n.text(language, "current-plan", value=i18n.text(language, f"plan-{effective.plan.code}")),
+            i18n.text(
+                language, "current-plan", value=i18n.text(language, f"plan-{effective.plan.code}")
+            ),
             i18n.text(language, "available-count", count=available_count),
             i18n.text(language, "last-check", value=last_check),
             i18n.text(language, "last-change", value=last_change),
