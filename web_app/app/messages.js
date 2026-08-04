@@ -28,7 +28,10 @@ for (const [locale, copy] of Object.entries(preferenceMessages)) Object.assign(m
 
 Object.assign(messages.en, {
   reports: "Reports", report: "Report", submitted: "Submitted", preview: "Preview",
-  user: "User", platform: "Platform", fullReport: "Full report"
+  user: "User", platform: "Platform", fullReport: "Full report",
+  referrals: "Referrals", createReferral: "Create referral", ownerUsername: "Owner Telegram username",
+  referralCode: "Referral code", available: "Available", earned: "Lifetime earnings", paid: "Paid out",
+  copyLink: "Copy link", referralLinkCopied: "Referral link copied.", copyFailed: "Could not copy the referral link."
 });
 
 export function resolveLocale(input) {
