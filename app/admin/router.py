@@ -27,6 +27,10 @@ from app.admin.schemas import (
     DashboardResponse,
     LoginRequest,
     PaidUserPageResponse,
+    ReferralCreateRequest,
+    ReferralPayoutActionRequest,
+    ReferralPayoutRequest,
+    ReferralUpdateRequest,
     ReportDetailsResponse,
     ReportPageResponse,
     TransactionDetailsResponse,
@@ -59,8 +63,17 @@ from app.admin.service import (
     transaction_details,
 )
 from app.core.config import Settings, get_settings
-from app.db.models import Admin, AdminAudit, AdminSession
+from app.db.models import Admin, AdminAudit, AdminSession, ReferralPayout, ReferralProgram
 from app.db.session import get_session
+from app.referrals.service import (
+    ReferralBalances,
+    WithdrawalError,
+    create_program,
+    request_payout,
+)
+from app.referrals.service import (
+    balances as referral_balances,
+)
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -455,3 +468,232 @@ async def report(
     if item is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found")
     return item
+
+
+def _referral_payload(
+    program: ReferralProgram, balance: ReferralBalances, settings: Settings
+) -> dict[str, object]:
+    return {
+        "id": program.id,
+        "referral_code": program.referral_code,
+        "owner_telegram_username": program.owner_telegram_username,
+        "owner_telegram_user_id": program.owner_telegram_user_id,
+        "is_active": program.is_active,
+        "commission_rate_basis_points": program.commission_rate_basis_points,
+        "created_at": program.created_at,
+        "deep_link": f"https://t.me/{settings.telegram_bot_username or ''}?start=ref_{program.referral_code}",
+        "lifetime_earned_cents": balance.earned_cents,
+        "available_cents": balance.available_cents,
+        "reserved_cents": balance.reserved_cents,
+        "paid_cents": balance.paid_cents,
+        "reversed_cents": balance.reversed_cents,
+    }
+
+
+@router.get("/referrals")
+async def referrals(
+    _: AdminPrincipal = Depends(current_principal),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    programs = list(
+        await session.scalars(select(ReferralProgram).order_by(ReferralProgram.created_at.desc()))
+    )
+    return {
+        "items": [
+            _referral_payload(item, await referral_balances(session, item.id), settings)
+            for item in programs
+        ]
+    }
+
+
+@router.post("/referrals", status_code=status.HTTP_201_CREATED)
+async def create_referral(
+    payload: ReferralCreateRequest,
+    principal: AdminPrincipal = Depends(csrf_protected),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    try:
+        program = await create_program(
+            session,
+            owner_username=payload.owner_telegram_username,
+            referral_code=payload.referral_code,
+            created_by_admin_id=principal.admin_id,
+        )
+        await session.commit()
+    except ValueError as error:
+        await session.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail={"code": str(error)}
+        ) from error
+    return _referral_payload(program, await referral_balances(session, program.id), settings)
+
+
+@router.get("/referrals/{referral_id}")
+async def referral_detail(
+    referral_id: int,
+    _: AdminPrincipal = Depends(current_principal),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    program = await session.get(ReferralProgram, referral_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="Referral not found")
+    return _referral_payload(program, await referral_balances(session, program.id), settings)
+
+
+@router.patch("/referrals/{referral_id}")
+async def update_referral(
+    referral_id: int,
+    payload: ReferralUpdateRequest,
+    principal: AdminPrincipal = Depends(csrf_protected),
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, object]:
+    program = await session.get(ReferralProgram, referral_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="Referral not found")
+    changed = program.is_active != payload.is_active
+    program.is_active = payload.is_active
+    if changed:
+        await _audit(
+            session,
+            principal,
+            "referral_reactivated" if payload.is_active else "referral_deactivated",
+            "referral_program",
+            str(program.id),
+        )
+    await session.commit()
+    return _referral_payload(program, await referral_balances(session, program.id), settings)
+
+
+@router.get("/referrals/{referral_id}/stats")
+async def referral_stats(
+    referral_id: int,
+    _: AdminPrincipal = Depends(current_principal),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    program = await session.get(ReferralProgram, referral_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="Referral not found")
+    value = await referral_balances(session, program.id)
+    return {
+        "pending_cents": value.pending_cents,
+        "earned_cents": value.earned_cents,
+        "available_cents": value.available_cents,
+        "reserved_cents": value.reserved_cents,
+        "paid_cents": value.paid_cents,
+        "reversed_cents": value.reversed_cents,
+        "currency": "EUR",
+    }
+
+
+@router.get("/referrals/{referral_id}/payouts")
+async def referral_payouts(
+    referral_id: int,
+    _: AdminPrincipal = Depends(current_principal),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    values = list(
+        await session.scalars(
+            select(ReferralPayout)
+            .where(ReferralPayout.referral_program_id == referral_id)
+            .order_by(ReferralPayout.requested_at.desc())
+        )
+    )
+    return {
+        "items": [
+            {
+                "id": item.id,
+                "amount_cents": item.amount_cents,
+                "currency": item.currency,
+                "status": item.status,
+                "requested_at": item.requested_at,
+                "provider_transfer_id": item.provider_transfer_id,
+                "failure_code": item.failure_code,
+            }
+            for item in values
+        ]
+    }
+
+
+@router.post("/referrals/{referral_id}/payouts", status_code=status.HTTP_201_CREATED)
+async def admin_request_payout(
+    referral_id: int,
+    payload: ReferralPayoutRequest,
+    principal: AdminPrincipal = Depends(csrf_protected),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    program = await session.get(ReferralProgram, referral_id)
+    if program is None:
+        raise HTTPException(status_code=404, detail="Referral not found")
+    try:
+        payout = await request_payout(
+            session,
+            program=program,
+            amount_cents=payload.amount_cents,
+            idempotency_key=payload.idempotency_key,
+        )
+        payout.created_by_admin_id = principal.admin_id
+        await session.commit()
+    except WithdrawalError as error:
+        await session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": error.code,
+                "available_balance": f"{error.available_cents / 100:.2f}",
+                "currency": "EUR",
+            },
+        ) from error
+    return {"id": payout.id, "status": payout.status, "amount_cents": payout.amount_cents}
+
+
+@router.post("/referral-payouts/{payout_id}/approve")
+async def approve_referral_payout(
+    payout_id: int,
+    _: ReferralPayoutActionRequest,
+    principal: AdminPrincipal = Depends(csrf_protected),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    payout = await session.get(ReferralPayout, payout_id)
+    if payout is None:
+        raise HTTPException(status_code=404, detail="Payout not found")
+    if payout.status != "requested":
+        raise HTTPException(status_code=409, detail={"code": "payout_not_requestable"})
+    payout.status, payout.approved_at = "approved", datetime.now(UTC)
+    await _audit(session, principal, "payout_approved", "referral_payout", str(payout.id))
+    await session.commit()
+    return {"id": payout.id, "status": payout.status}
+
+
+@router.post("/referral-payouts/{payout_id}/paid")
+async def pay_referral_payout(
+    payout_id: int,
+    payload: ReferralPayoutActionRequest,
+    principal: AdminPrincipal = Depends(csrf_protected),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, object]:
+    payout = await session.get(ReferralPayout, payout_id)
+    if payout is None:
+        raise HTTPException(status_code=404, detail="Payout not found")
+    if payout.status != "approved" or not payload.external_reference:
+        raise HTTPException(
+            status_code=409, detail={"code": "payout_not_approved_or_reference_missing"}
+        )
+    payout.status, payout.paid_at, payout.provider_transfer_id = (
+        "paid",
+        datetime.now(UTC),
+        payload.external_reference,
+    )
+    await _audit(
+        session,
+        principal,
+        "payout_paid",
+        "referral_payout",
+        str(payout.id),
+        {"external_reference": payload.external_reference},
+    )
+    await session.commit()
+    return {"id": payout.id, "status": payout.status}

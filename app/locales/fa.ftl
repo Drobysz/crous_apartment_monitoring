@@ -180,3 +180,9 @@ report-too-long = گزارش شما بیش از حد طولانی است.
 report-sent = سپاس. گزارش شما ارسال شد.
 report-card = {date}\n{text}
 discord-ready = پایش CROUS آماده است.
+report-cooldown-active = می‌توانید گزارش دیگری را در {seconds} ثانیه ارسال کنید.
+digest-stop = توقف این پیام‌ها
+digest-stopped = پیام‌های تبلیغاتی مسکن متوقف شدند.
+unsubscribed-digest = 🚨 هنوز دنبال مسکن CROUS هستید؟ امروز {total_today} مورد شناسایی شد.
+
+مکان‌های جدید به‌ویژه در این مناطق ظاهر شدند: {top_departments}

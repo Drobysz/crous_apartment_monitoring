@@ -134,3 +134,26 @@ class ReportDetailsResponse(ReportResponse):
     text: str
     platform: str | None
     platform_user_id: int | None
+
+
+class ReferralCreateRequest(BaseModel):
+    owner_telegram_username: str = Field(min_length=1, max_length=33)
+    referral_code: str = Field(min_length=3, max_length=64)
+
+
+class ReferralUpdateRequest(BaseModel):
+    is_active: bool
+
+
+class ReferralPayoutRequest(BaseModel):
+    amount_cents: int = Field(ge=500)
+    idempotency_key: str = Field(min_length=16, max_length=128)
+
+
+class ReferralPayoutActionRequest(BaseModel):
+    external_reference: str | None = Field(default=None, max_length=255)
+    failure_code: str | None = Field(default=None, max_length=64)
+
+
+class ReferralOwnerExchangeRequest(BaseModel):
+    token: str = Field(min_length=20, max_length=255)

@@ -50,6 +50,14 @@ available-again = 🔔 Available again
 baseline = Monitoring enabled: {count} apartments saved as the baseline.
 location-required = Choose an area before enabling monitoring.
 error = A temporary error occurred. Please try again later.
+report-cooldown-active = You can submit another report in {seconds} seconds.
+digest-stop = Stop these messages
+digest-stopped = Promotional housing messages are now stopped.
+unsubscribed-digest = 🚨 Still looking for CROUS housing? {total_today} were detected today.
+
+New places appeared especially in: {top_departments}
+
+Your personalised alerts are paused. Activate a subscription to receive matching housing in real time.
 list-loading = Loading current apartments…
 invalid-location-area = The selected area is invalid. Choose it again.
 list-current = The list is already up to date.

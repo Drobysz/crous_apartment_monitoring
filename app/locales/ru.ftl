@@ -180,3 +180,9 @@ report-too-long = Обращение слишком длинное.
 report-sent = Спасибо. Обращение отправлено.
 report-card = {date}\n{text}
 discord-ready = Мониторинг CROUS готов.
+report-cooldown-active = Следующий отчёт можно отправить через {seconds} секунд.
+digest-stop = Остановить эти сообщения
+digest-stopped = Рекламные сообщения о жилье отключены.
+unsubscribed-digest = 🚨 Вы всё ещё ищете жильё CROUS? Сегодня обнаружено: {total_today}.
+
+Новые места появились, в частности, в: {top_departments}

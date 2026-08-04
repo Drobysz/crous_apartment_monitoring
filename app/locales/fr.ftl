@@ -48,6 +48,14 @@ available-again = 🔔 Disponible à nouveau
 baseline = Surveillance activée : {count} logement(s) enregistrés comme référence.
 location-required = Choisissez une zone avant d’activer la surveillance.
 error = Une erreur temporaire est survenue. Réessayez plus tard.
+report-cooldown-active = Vous pourrez envoyer un autre signalement dans {seconds} secondes.
+digest-stop = Arrêter ces messages
+digest-stopped = Les messages promotionnels de logement sont arrêtés.
+unsubscribed-digest = 🚨 Tu cherches encore un logement CROUS ? {total_today} ont été détectés aujourd’hui.
+
+De nouvelles places sont apparues notamment dans : {top_departments}
+
+Tes alertes personnalisées sont en pause. Active ton abonnement pour recevoir les prochains logements correspondants en temps réel.
 list-loading = Recherche des logements disponibles…
 invalid-location-area = La zone sélectionnée est invalide. Choisissez-la à nouveau.
 last-change = 🕒 Liste modifiée : {value}

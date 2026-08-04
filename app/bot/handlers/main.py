@@ -6,7 +6,7 @@ from html import escape
 
 import httpx
 import structlog
-from aiogram import Bot, Router
+from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -50,7 +50,15 @@ from app.geocoding.models import GeocodedPlace
 from app.monitoring.locks import SearchLock
 from app.monitoring.service import SnapshotDeliveryError, synchronize_search
 from app.payments.stripe import StripeError, create_checkout_session
-from app.reports.service import ReportValidationError, create_report, telegram_account, user_reports
+from app.referrals.service import attribute_first_touch
+from app.reports.service import (
+    ReportCooldownError,
+    ReportValidationError,
+    create_report,
+    report_cooldown_remaining,
+    telegram_account,
+    user_reports,
+)
 from app.restaurants.client import CrousRestaurantClient, RestaurantUnavailable, restaurant_from_api
 from app.restaurants.renderer import menu_text, restaurant_information
 from app.restaurants.service import (
@@ -589,6 +597,9 @@ def build_router(
         async with session_factory() as session:
             user = await user_for(message, session)
             await state.clear()
+            parts = (message.text or "").split(maxsplit=1)
+            if len(parts) == 2 and parts[1].startswith("ref_"):
+                await attribute_first_touch(session, user, parts[1][4:])
             await main_screen(message.bot, session, user, nav, force_new=True)
             await session.commit()
 
@@ -685,6 +696,26 @@ def build_router(
             )
             await session.commit()
 
+    @router.callback_query(F.data.startswith("digest:"))
+    async def digest_action(callback: CallbackQuery) -> None:
+        if callback.message is None:
+            return
+        async with session_factory() as session:
+            user = await user_for(callback, session)
+            action = (callback.data or "").partition(":")[2]
+            if action == "stop":
+                user.digest_opted_out = True
+                await callback.answer(i18n.text(user.language, "digest-stopped"), show_alert=True)
+            elif action == "subscription":
+                await render_subscription(callback.bot, session, user)
+                await callback.answer()
+            elif action == "housing":
+                await render_location(callback.bot, session, user)
+                await callback.answer()
+            else:
+                await callback.answer()
+            await session.commit()
+
     @router.callback_query(NavCallback.filter())
     async def navigation(
         callback: CallbackQuery, callback_data: NavCallback, state: FSMContext
@@ -720,6 +751,16 @@ def build_router(
                 await state.clear()
                 await render_user_reports(callback.bot, session, user)
             elif action == "reports-write":
+                remaining = await report_cooldown_remaining(session, user)
+                if remaining:
+                    await state.clear()
+                    await callback.answer(
+                        i18n.text(user.language, "report-cooldown-active", seconds=remaining),
+                        show_alert=True,
+                    )
+                    await render_reports(callback.bot, session, user)
+                    await session.commit()
+                    return
                 await state.set_state(ReportFlow.text_input)
                 version = user.active_navigation_version + 1
                 await nav.render_text_screen(
@@ -1517,8 +1558,18 @@ def build_router(
                     session, user, message.text, await telegram_account(session, user)
                 )
             except ReportValidationError as error:
-                key = "report-empty" if str(error) == "empty" else "report-too-long"
-                await message.answer(i18n.text(user.language, key))
+                if isinstance(error, ReportCooldownError):
+                    await state.clear()
+                    await message.answer(
+                        i18n.text(
+                            user.language,
+                            "report-cooldown-active",
+                            seconds=error.remaining_seconds,
+                        )
+                    )
+                else:
+                    key = "report-empty" if str(error) == "empty" else "report-too-long"
+                    await message.answer(i18n.text(user.language, key))
             else:
                 await state.clear()
                 await message.answer(i18n.text(user.language, "report-sent"))

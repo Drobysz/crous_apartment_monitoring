@@ -7,8 +7,12 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     telegram_bot_token: SecretStr | None = None
+    telegram_bot_username: str | None = None
     notification_bot_token: SecretStr | None = None
     discord_bot_token: SecretStr | None = None
+    referral_bot_token: SecretStr | None = None
+    referral_bot_username: str | None = None
+    referral_stats_base_url: HttpUrl | None = None
     discord_application_id: int | None = None
     # Optional development-only guild for immediate slash-command registration.
     discord_guild_id: int | None = None
@@ -26,6 +30,7 @@ class Settings(BaseSettings):
     payment_success_path: str = "/payments/success"
     payment_cancel_path: str = "/payments/cancel"
     notification_bot_webhook_path: str = "/notification_bot/webhook"
+    referral_bot_webhook_path: str = "/referral_bot/webhook"
     nginx_internal_port: int = 80
     nginx_external_port: int = 8080
     crous_base_url: HttpUrl = HttpUrl("https://trouverunlogement.lescrous.fr")
@@ -56,6 +61,13 @@ class Settings(BaseSettings):
     admin_session_secret: SecretStr | None = None
     admin_access_token_minutes: int = 15
     admin_refresh_token_days: int = 30
+    referral_login_token_ttl_minutes: int = 15
+    default_referral_commission_rate: float = 0.30
+    referral_payouts_enabled: bool = True
+    referral_payout_provider: str = "manual"
+    referral_minimum_payout_eur: float = 5.00
+    referral_payout_hold_days: int = 14
+    unsubscribed_digest_interval_hours: int = 10
 
     @field_validator(
         "api_prefix",
@@ -66,6 +78,7 @@ class Settings(BaseSettings):
         "payment_success_path",
         "payment_cancel_path",
         "notification_bot_webhook_path",
+        "referral_bot_webhook_path",
         mode="before",
     )
     @classmethod
@@ -95,6 +108,7 @@ class Settings(BaseSettings):
             "PAYMENT_SUCCESS_PATH": self.payment_success_path,
             "PAYMENT_CANCEL_PATH": self.payment_cancel_path,
             "NOTIFICATION_BOT_WEBHOOK_PATH": self.notification_bot_webhook_path,
+            "REFERRAL_BOT_WEBHOOK_PATH": self.referral_bot_webhook_path,
         }
         values = list(paths.items())
         for index, (name, path) in enumerate(values):
@@ -105,6 +119,26 @@ class Settings(BaseSettings):
                     or other_path.startswith(path + "/")
                 ):
                     raise ValueError(f"{name} conflicts with {other_name}")
+        return self
+
+    @model_validator(mode="after")
+    def validate_referral_settings(self) -> "Settings":
+        if not 1 <= self.referral_login_token_ttl_minutes <= 15:
+            raise ValueError("REFERRAL_LOGIN_TOKEN_TTL_MINUTES must be between 1 and 15")
+        if self.default_referral_commission_rate < 0 or self.default_referral_commission_rate > 1:
+            raise ValueError("DEFAULT_REFERRAL_COMMISSION_RATE must be between 0 and 1")
+        if self.referral_payout_provider != "manual":
+            raise ValueError("REFERRAL_PAYOUT_PROVIDER must be manual in this release")
+        if self.referral_minimum_payout_eur < 5:
+            raise ValueError("REFERRAL_MINIMUM_PAYOUT_EUR must be at least 5.00")
+        if self.unsubscribed_digest_interval_hours < 1:
+            raise ValueError("UNSUBSCRIBED_DIGEST_INTERVAL_HOURS must be positive")
+        if (
+            self.referral_stats_base_url is not None
+            and self.referral_stats_base_url.scheme != "https"
+            and not self.test_mode
+        ):
+            raise ValueError("REFERRAL_STATS_BASE_URL must use HTTPS outside TEST_MODE")
         return self
 
     def is_developer(self, telegram_user_id: int | None) -> bool:

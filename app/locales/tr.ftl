@@ -180,3 +180,9 @@ report-too-long = Bildiriminiz çok uzun.
 report-sent = Teşekkürler. Bildiriminiz gönderildi.
 report-card = {date}\n{text}
 discord-ready = CROUS izleme hazır.
+report-cooldown-active = {seconds} saniye içinde başka bir bildirim gönderebilirsiniz.
+digest-stop = Bu mesajları durdur
+digest-stopped = Tanıtım konut mesajları durduruldu.
+unsubscribed-digest = 🚨 Hâlâ CROUS konutu mu arıyorsunuz? Bugün {total_today} ilan tespit edildi.
+
+Yeni yerler özellikle şuralarda göründü: {top_departments}
