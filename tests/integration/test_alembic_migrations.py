@@ -21,7 +21,7 @@ pytestmark = pytest.mark.integration
 BASE = "20260729_01_base"
 ADMIN = "20260729_02_admin"
 FILTERS = "20260729_03_filters"
-HEAD = "20260804_07_favorites_reports"
+HEAD = "20260804_08_referrals"
 
 EXPECTED_TABLES = {
     "admin_audits",
@@ -45,11 +45,18 @@ EXPECTED_TABLES = {
     "favorite_transition_events",
     "restaurant_menu_deliveries",
     "restaurant_subscriptions",
+    "referral_commissions",
+    "referral_owner_login_tokens",
+    "referral_payout_allocations",
+    "referral_payouts",
+    "referral_programs",
     "subscription_plans",
     "user_subscriptions",
     "users",
     "user_platform_accounts",
     "user_reports",
+    "user_referrals",
+    "unsubscribed_digest_deliveries",
 }
 
 
@@ -72,11 +79,12 @@ async def _schema_snapshot(
             user_columns = await connection.run_sync(
                 lambda sync: {column["name"] for column in inspect(sync).get_columns("users")}
             )
-            plans = (
+            plan_rows = (
                 await connection.execute(
                     text("SELECT code, price_cents FROM subscription_plans ORDER BY code")
                 )
             ).all()
+            plans = [(str(row[0]), int(row[1])) for row in plan_rows]
             version = (
                 await connection.execute(text("SELECT version_num FROM alembic_version"))
             ).scalar_one_or_none()
@@ -131,9 +139,10 @@ def test_full_migration_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:
 
         command.upgrade(config, HEAD)
         first_snapshot = asyncio.run(_schema_snapshot(database_url))
-        tables, search_columns, _, plans, version = first_snapshot
+        tables, search_columns, user_columns, plans, version = first_snapshot
         assert tables == EXPECTED_TABLES
         assert "last_changed_at" in search_columns
+        assert "digest_opted_out" in user_columns
         assert plans == [("lifetime", 2400), ("season", 1000)]
         assert version == HEAD
         command.check(config)

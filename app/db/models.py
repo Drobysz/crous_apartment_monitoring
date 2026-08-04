@@ -47,6 +47,7 @@ class User(Timestamped, Base):
     active_navigation_version: Mapped[int] = mapped_column(Integer, default=0)
     current_fsm_state: Mapped[str | None] = mapped_column(String(64))
     trial_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    digest_opted_out: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
 
 class Search(Timestamped, Base):
@@ -455,3 +456,168 @@ class AdminNotificationChat(Timestamped, Base):
     )
     telegram_user_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
     telegram_chat_id: Mapped[int] = mapped_column(BigInteger, unique=True, index=True)
+
+
+class ReferralProgram(Timestamped, Base):
+    """A public code owned by a creator; historic commission rows keep their own rate."""
+
+    __tablename__ = "referral_programs"
+    __table_args__ = (
+        CheckConstraint(
+            "commission_rate_basis_points >= 0 AND commission_rate_basis_points <= 10000",
+            name="ck_referral_program_rate",
+        ),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    referral_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    owner_telegram_username: Mapped[str] = mapped_column(String(33))
+    owner_username_key: Mapped[str] = mapped_column(String(32), index=True)
+    owner_telegram_user_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True)
+    commission_rate_basis_points: Mapped[int] = mapped_column(Integer, default=3000, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
+    created_by_admin_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admins.id", ondelete="SET NULL"), index=True
+    )
+
+
+class UserReferral(Base):
+    """First-touch attribution. The unique user_id is the race-safe permanent binding."""
+
+    __tablename__ = "user_referrals"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_user_referral_user"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    referral_program_id: Mapped[int] = mapped_column(
+        ForeignKey("referral_programs.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    attributed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    attribution_source: Mapped[str] = mapped_column(
+        String(32), default="telegram_start", nullable=False
+    )
+
+
+class ReferralCommission(Base):
+    """Append-only commission/reversal ledger. Amounts are EUR cents, never floats."""
+
+    __tablename__ = "referral_commissions"
+    __table_args__ = (
+        CheckConstraint("gross_amount_cents >= 0", name="ck_referral_commission_gross"),
+        CheckConstraint("commission_amount_cents >= 0", name="ck_referral_commission_amount"),
+        CheckConstraint("currency = 'EUR'", name="ck_referral_commission_currency"),
+        CheckConstraint(
+            "status IN ('pending', 'earned', 'reversed', 'paid')",
+            name="ck_referral_commission_status",
+        ),
+        UniqueConstraint("purchase_id", name="uq_referral_commission_purchase"),
+        UniqueConstraint("payment_event_id", name="uq_referral_commission_payment_event"),
+        UniqueConstraint("reversal_of_id", name="uq_referral_commission_reversal"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    referral_program_id: Mapped[int] = mapped_column(
+        ForeignKey("referral_programs.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    purchase_id: Mapped[int | None] = mapped_column(
+        ForeignKey("purchases.id", ondelete="RESTRICT"), nullable=True
+    )
+    payment_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    gross_amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), default="EUR", nullable=False)
+    commission_rate_basis_points: Mapped[int] = mapped_column(Integer, nullable=False)
+    commission_amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="earned", nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
+    reversed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reversal_of_id: Mapped[int | None] = mapped_column(
+        ForeignKey("referral_commissions.id", ondelete="RESTRICT"), nullable=True
+    )
+
+
+class ReferralPayout(Base):
+    __tablename__ = "referral_payouts"
+    __table_args__ = (
+        CheckConstraint("amount_cents > 0", name="ck_referral_payout_amount"),
+        CheckConstraint("currency = 'EUR'", name="ck_referral_payout_currency"),
+        CheckConstraint(
+            "status IN ('requested', 'approved', 'processing', 'paid', 'failed', 'cancelled')",
+            name="ck_referral_payout_status",
+        ),
+        UniqueConstraint("idempotency_key", name="uq_referral_payout_idempotency"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    referral_program_id: Mapped[int] = mapped_column(
+        ForeignKey("referral_programs.id", ondelete="RESTRICT"), index=True
+    )
+    provider: Mapped[str] = mapped_column(String(32), default="manual", nullable=False)
+    provider_account_id: Mapped[str | None] = mapped_column(String(255))
+    provider_transfer_id: Mapped[str | None] = mapped_column(String(255), unique=True)
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(3), default="EUR", nullable=False)
+    status: Mapped[str] = mapped_column(String(16), default="requested", nullable=False, index=True)
+    requested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    processing_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failure_code: Mapped[str | None] = mapped_column(String(64))
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    created_by_admin_id: Mapped[int | None] = mapped_column(
+        ForeignKey("admins.id", ondelete="SET NULL"), index=True
+    )
+
+
+class ReferralPayoutAllocation(Base):
+    __tablename__ = "referral_payout_allocations"
+    __table_args__ = (
+        CheckConstraint("amount_cents > 0", name="ck_referral_payout_allocation_amount"),
+        UniqueConstraint("payout_id", "commission_id", name="uq_referral_payout_allocation"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    payout_id: Mapped[int] = mapped_column(
+        ForeignKey("referral_payouts.id", ondelete="RESTRICT"), index=True
+    )
+    commission_id: Mapped[int] = mapped_column(
+        ForeignKey("referral_commissions.id", ondelete="RESTRICT"), index=True
+    )
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class ReferralOwnerLoginToken(Base):
+    __tablename__ = "referral_owner_login_tokens"
+    __table_args__ = (UniqueConstraint("token_hash", name="uq_referral_owner_token_hash"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    referral_program_id: Mapped[int] = mapped_column(
+        ForeignKey("referral_programs.id", ondelete="CASCADE"), index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, index=True
+    )
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class UnsubscribedDigestDelivery(Base):
+    __tablename__ = "unsubscribed_digest_deliveries"
+    __table_args__ = (
+        UniqueConstraint("user_id", "period_key", name="uq_unsubscribed_digest_user_period"),
+    )
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    period_key: Mapped[int] = mapped_column(BigInteger, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="reserved", nullable=False, index=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    reserved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
