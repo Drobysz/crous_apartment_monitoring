@@ -21,7 +21,7 @@ pytestmark = pytest.mark.integration
 BASE = "20260729_01_base"
 ADMIN = "20260729_02_admin"
 FILTERS = "20260729_03_filters"
-HEAD = "20260729_04_notify"
+HEAD = "20260803_05_resto"
 
 EXPECTED_TABLES = {
     "admin_audits",
@@ -30,6 +30,7 @@ EXPECTED_TABLES = {
     "admins",
     "alembic_version",
     "geocoding_cache",
+    "housing_daily_statistics",
     "image_cache",
     "listings",
     "notifications",
@@ -38,6 +39,9 @@ EXPECTED_TABLES = {
     "search_display_messages",
     "search_listings",
     "searches",
+    "favorite_restaurants",
+    "restaurant_menu_deliveries",
+    "restaurant_subscriptions",
     "subscription_plans",
     "user_subscriptions",
     "users",

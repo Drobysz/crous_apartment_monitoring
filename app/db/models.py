@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, time
 from typing import Any
 
 from sqlalchemy import (
@@ -8,11 +8,13 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
     String,
     Text,
+    Time,
     UniqueConstraint,
     func,
 )
@@ -214,6 +216,56 @@ class Notification(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class HousingDailyStatistic(Base):
+    __tablename__ = "housing_daily_statistics"
+    __table_args__ = (UniqueConstraint("search_id", "statistic_date", name="uq_housing_daily_stat_search_date"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    search_id: Mapped[int] = mapped_column(ForeignKey("searches.id", ondelete="CASCADE"), index=True)
+    search_identifier: Mapped[str] = mapped_column(String(128))
+    cheapest_price_cents: Mapped[int | None]
+    highest_price_cents: Mapped[int | None]
+    unique_apartment_count: Mapped[int] = mapped_column(Integer)
+    statistic_date: Mapped[date] = mapped_column(Date, index=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class FavoriteRestaurant(Timestamped, Base):
+    __tablename__ = "favorite_restaurants"
+    __table_args__ = (UniqueConstraint("user_id", "restaurant_code", name="uq_favorite_restaurant_user_code"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    restaurant_code: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(255))
+    city: Mapped[str | None] = mapped_column(String(255))
+    latitude: Mapped[float | None]
+    longitude: Mapped[float | None]
+    metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class RestaurantSubscription(Timestamped, Base):
+    __tablename__ = "restaurant_subscriptions"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    primary_restaurant_id: Mapped[int | None] = mapped_column(ForeignKey("favorite_restaurants.id", ondelete="SET NULL"), unique=True, index=True)
+    delivery_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    delivery_time: Mapped[time] = mapped_column(Time, default=lambda: time(hour=8))
+
+
+class RestaurantMenuDelivery(Base):
+    __tablename__ = "restaurant_menu_deliveries"
+    __table_args__ = (UniqueConstraint("user_id", "delivery_date", name="uq_restaurant_delivery_user_date"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    favorite_restaurant_id: Mapped[int | None] = mapped_column(ForeignKey("favorite_restaurants.id", ondelete="SET NULL"), index=True)
+    delivery_date: Mapped[date] = mapped_column(Date, index=True)
+    scheduled_for: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    telegram_message_id: Mapped[int | None]
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class GeocodingCache(Base):
