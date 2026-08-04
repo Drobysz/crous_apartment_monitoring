@@ -13,7 +13,8 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.db.models import Purchase, SubscriptionPlan, User
+from app.db.models import Purchase, ReferralCommission, SubscriptionPlan, User
+from app.referrals.service import create_commission_for_purchase, reverse_commission
 from app.subscriptions.service import activate_subscription, plan_by_code
 
 
@@ -38,7 +39,9 @@ def _secret(settings: Settings, name: str) -> str:
 def payment_return_token(settings: Settings, user_id: int, plan_id: int) -> str:
     """Bind a cancellation return URL to its intended Telegram user."""
     payload = f"cancel:{user_id}:{plan_id}".encode()
-    return hmac.new(_secret(settings, "stripe_secret_key").encode(), payload, hashlib.sha256).hexdigest()
+    return hmac.new(
+        _secret(settings, "stripe_secret_key").encode(), payload, hashlib.sha256
+    ).hexdigest()
 
 
 def valid_payment_return_token(settings: Settings, user_id: int, plan_id: int, token: str) -> bool:
@@ -85,7 +88,10 @@ async def create_checkout_session(
         response = await client.post(
             "https://api.stripe.com/v1/checkout/sessions",
             content=urlencode(payload),
-            headers={"Authorization": f"Bearer {_secret(settings, 'stripe_secret_key')}", "Content-Type": "application/x-www-form-urlencoded"},
+            headers={
+                "Authorization": f"Bearer {_secret(settings, 'stripe_secret_key')}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
         )
     if not response.is_success:
         raise StripeError("Stripe Checkout could not be created")
@@ -96,7 +102,9 @@ async def create_checkout_session(
     return url
 
 
-def verify_webhook(payload: bytes, signature: str | None, secret: str, *, tolerance_seconds: int = 300) -> dict[str, object]:
+def verify_webhook(
+    payload: bytes, signature: str | None, secret: str, *, tolerance_seconds: int = 300
+) -> dict[str, object]:
     """Verify Stripe's signed payload without trusting redirect or Telegram input."""
     if not signature:
         raise StripeError("Missing Stripe signature")
@@ -111,7 +119,9 @@ def verify_webhook(payload: bytes, signature: str | None, secret: str, *, tolera
         raise StripeError("Invalid Stripe signature") from error
     if abs(int(time.time()) - timestamp) > tolerance_seconds:
         raise StripeError("Expired Stripe signature")
-    expected = hmac.new(secret.encode(), f"{timestamp}.".encode() + payload, hashlib.sha256).hexdigest()
+    expected = hmac.new(
+        secret.encode(), f"{timestamp}.".encode() + payload, hashlib.sha256
+    ).hexdigest()
     if not any(hmac.compare_digest(expected, candidate) for candidate in values.get("v1", [])):
         raise StripeError("Invalid Stripe signature")
     try:
@@ -127,7 +137,9 @@ def _metadata(value: object) -> dict[str, str]:
     return {str(key): str(item) for key, item in value.items()} if isinstance(value, dict) else {}
 
 
-async def retrieve_checkout_session(session_id: str, settings: Settings | None = None) -> dict[str, object]:
+async def retrieve_checkout_session(
+    session_id: str, settings: Settings | None = None
+) -> dict[str, object]:
     """Fetch a Checkout Session from Stripe before trusting a browser return."""
     settings = settings or get_settings()
     if not session_id.startswith("cs_"):
@@ -180,7 +192,12 @@ async def process_paid_checkout(
         raise StripeError("Stripe metadata is incomplete") from error
     user = await session.get(User, user_id)
     plan = await session.get(SubscriptionPlan, plan_id)
-    if user is None or plan is None or user.telegram_user_id != telegram_user_id or plan.code != plan_code:
+    if (
+        user is None
+        or plan is None
+        or user.telegram_user_id != telegram_user_id
+        or plan.code != plan_code
+    ):
         raise StripeError("Stripe metadata does not match a purchasable plan")
     amount_cents = checkout.get("amount_total")
     if (
@@ -191,9 +208,14 @@ async def process_paid_checkout(
     ):
         raise StripeError("Stripe checkout data did not match the expected customer")
     purchase = Purchase(
-        user_id=user.id, subscription_plan_id=plan.id, stripe_checkout_session_id=checkout_id,
-        stripe_payment_intent_id=str(checkout["payment_intent"]) if checkout.get("payment_intent") else None,
-        stripe_event_id=event_id, amount_cents=amount_cents,
+        user_id=user.id,
+        subscription_plan_id=plan.id,
+        stripe_checkout_session_id=checkout_id,
+        stripe_payment_intent_id=str(checkout["payment_intent"])
+        if checkout.get("payment_intent")
+        else None,
+        stripe_event_id=event_id,
+        amount_cents=amount_cents,
         status="paid",
         is_test=checkout.get("livemode") is False,
         purchased_at=datetime.now(UTC),
@@ -202,6 +224,9 @@ async def process_paid_checkout(
     session.add(purchase)
     await session.flush()
     await activate_subscription(session, user, plan, source="stripe", purchase=purchase)
+    # This runs in the same transaction as the verified payment and is
+    # guarded by the unique purchase/event constraints on the ledger.
+    await create_commission_for_purchase(session, purchase, payment_event_id=event_id)
     return ProcessedPayment(user, plan)
 
 
@@ -209,6 +234,26 @@ async def process_checkout_completed(
     session: AsyncSession, event: dict[str, object], settings: Settings | None = None
 ) -> ProcessedPayment | None:
     """Process the signed `checkout.session.completed` webhook event."""
+    if event.get("type") in {"charge.refunded", "charge.dispute.created"}:
+        data = event.get("data")
+        charge = data.get("object") if isinstance(data, dict) else None
+        payment_intent = charge.get("payment_intent") if isinstance(charge, dict) else None
+        if not isinstance(payment_intent, str):
+            return None
+        purchase = await session.scalar(
+            select(Purchase).where(Purchase.stripe_payment_intent_id == payment_intent)
+        )
+        if purchase is None:
+            return None
+        commission = await session.scalar(
+            select(ReferralCommission).where(ReferralCommission.purchase_id == purchase.id)
+        )
+        if commission is not None:
+            try:
+                await reverse_commission(session, commission, reason=str(event.get("type")))
+            except ValueError:
+                pass
+        return None
     if event.get("type") != "checkout.session.completed":
         return None
     event_id = event.get("id")

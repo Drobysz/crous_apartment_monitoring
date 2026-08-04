@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.db.models import Purchase, SubscriptionPlan, User, UserSubscription
+from app.db.models import Admin, AdminAudit, Purchase, SubscriptionPlan, User, UserSubscription
 
 FREE = "free"
 TRIAL = "trial"
@@ -35,7 +35,9 @@ async def ensure_default_plans(session: AsyncSession, settings: Settings | None 
     for code, name, price_cents in values:
         plan = existing.get(code)
         if plan is None:
-            session.add(SubscriptionPlan(code=code, name=name, price_cents=price_cents, is_active=True))
+            session.add(
+                SubscriptionPlan(code=code, name=name, price_cents=price_cents, is_active=True)
+            )
         else:
             plan.name = name
     await session.flush()
@@ -48,7 +50,9 @@ async def plan_by_code(session: AsyncSession, code: str) -> SubscriptionPlan | N
     if code == TRIAL:
         return _virtual_plan(TRIAL, "Trial")
     return await session.scalar(
-        select(SubscriptionPlan).where(SubscriptionPlan.code == code, SubscriptionPlan.is_active.is_(True))
+        select(SubscriptionPlan).where(
+            SubscriptionPlan.code == code, SubscriptionPlan.is_active.is_(True)
+        )
     )
 
 
@@ -57,7 +61,9 @@ async def paid_plans(session: AsyncSession) -> list[SubscriptionPlan]:
     return list(
         await session.scalars(
             select(SubscriptionPlan)
-            .where(SubscriptionPlan.code.in_((SEASON, LIFETIME)), SubscriptionPlan.is_active.is_(True))
+            .where(
+                SubscriptionPlan.code.in_((SEASON, LIFETIME)), SubscriptionPlan.is_active.is_(True)
+            )
             .order_by(SubscriptionPlan.id)
         )
     )
@@ -69,7 +75,11 @@ def plan_features(plan: SubscriptionPlan) -> tuple[str, ...]:
 
 def plan_interval(plan: SubscriptionPlan, settings: Settings | None = None) -> int:
     settings = settings or get_settings()
-    return settings.premium_monitoring_interval_seconds if plan_features(plan) else settings.free_monitoring_interval_seconds
+    return (
+        settings.premium_monitoring_interval_seconds
+        if plan_features(plan)
+        else settings.free_monitoring_interval_seconds
+    )
 
 
 async def get_effective_subscription(
@@ -77,6 +87,7 @@ async def get_effective_subscription(
 ) -> EffectiveSubscription:
     now = now or datetime.now(UTC)
     await ensure_default_plans(session)
+    await grant_admin_lifetime_if_authorized(session, user, now=now)
     entitlement = await session.scalar(
         select(UserSubscription)
         .where(
@@ -85,13 +96,69 @@ async def get_effective_subscription(
             UserSubscription.starts_at <= now,
             UserSubscription.ends_at.is_(None) | (UserSubscription.ends_at > now),
         )
-        .order_by(UserSubscription.ends_at.is_(None).desc(), UserSubscription.starts_at.desc(), UserSubscription.id.desc())
+        .order_by(
+            UserSubscription.ends_at.is_(None).desc(),
+            UserSubscription.starts_at.desc(),
+            UserSubscription.id.desc(),
+        )
     )
     if entitlement:
         plan = await session.get(SubscriptionPlan, entitlement.subscription_plan_id)
         if plan:
             return EffectiveSubscription(plan, entitlement)
     return EffectiveSubscription(_virtual_plan(FREE, "Free"), None)
+
+
+async def grant_admin_lifetime_if_authorized(
+    session: AsyncSession, user: User, *, now: datetime | None = None
+) -> UserSubscription | None:
+    """Grant a separately auditable lifetime entitlement to a verified admin username.
+
+    User and Telegram numeric identity are retained on the entitlement's user row;
+    no purchase, revenue, or Stripe record is manufactured.
+    """
+    if not user.telegram_username:
+        return None
+    now = now or datetime.now(UTC)
+    username_key = user.telegram_username.lstrip("@").casefold()
+    admin = await session.scalar(
+        select(Admin).where(Admin.username_key == username_key, Admin.is_active.is_(True))
+    )
+    if admin is None:
+        return None
+    existing = await session.scalar(
+        select(UserSubscription).where(
+            UserSubscription.user_id == user.id,
+            UserSubscription.activation_source == "admin_lifetime",
+            UserSubscription.status == "active",
+        )
+    )
+    if existing is not None:
+        return existing
+    plan = await plan_by_code(session, LIFETIME)
+    if plan is None:
+        return None
+    entitlement = UserSubscription(
+        user_id=user.id,
+        subscription_plan_id=plan.id,
+        purchase_id=None,
+        starts_at=now,
+        ends_at=None,
+        status="active",
+        activation_source="admin_lifetime",
+    )
+    session.add(entitlement)
+    await session.flush()
+    session.add(
+        AdminAudit(
+            actor_admin_id=admin.id,
+            action="admin_lifetime_subscription_granted",
+            target_type="user",
+            target_id=str(user.id),
+            metadata_json={"telegram_user_id": user.telegram_user_id},
+        )
+    )
+    return entitlement
 
 
 async def get_pending_subscription(
@@ -133,10 +200,14 @@ def season_window(now: datetime, settings: Settings | None = None) -> tuple[date
     settings = settings or get_settings()
     timezone = now.tzinfo or UTC
     start_this_year = datetime.combine(
-        date(now.year, settings.season_start_month, settings.season_start_day), time.min, tzinfo=timezone
+        date(now.year, settings.season_start_month, settings.season_start_day),
+        time.min,
+        tzinfo=timezone,
     )
     end_this_year = datetime.combine(
-        date(now.year, settings.season_end_month, settings.season_end_day), time.max, tzinfo=timezone
+        date(now.year, settings.season_end_month, settings.season_end_day),
+        time.max,
+        tzinfo=timezone,
     )
     if now > end_this_year:
         return start_this_year.replace(year=now.year + 1), end_this_year.replace(year=now.year + 1)
@@ -219,7 +290,9 @@ async def reset_current_subscription(session: AsyncSession, user: User) -> bool:
     return True
 
 
-async def expire_subscriptions(session: AsyncSession, now: datetime | None = None) -> list[UserSubscription]:
+async def expire_subscriptions(
+    session: AsyncSession, now: datetime | None = None
+) -> list[UserSubscription]:
     now = now or datetime.now(UTC)
     expired = list(
         await session.scalars(
