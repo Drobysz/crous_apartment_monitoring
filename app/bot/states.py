@@ -11,3 +11,8 @@ class LocationFlow(StatesGroup):
 class FilterFlow(StatesGroup):
     price_input = State()
     surface_input = State()
+
+
+class RestaurantFlow(StatesGroup):
+    city_input = State()
+    location_input = State()

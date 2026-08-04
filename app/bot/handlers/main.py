@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 
 import httpx
 import structlog
@@ -23,21 +24,39 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.bot.callbacks import NavCallback
 from app.bot.cards import send_accommodation_card
-from app.bot.keyboards import back, language_menu, location_menu, radius_menu
+from app.bot.keyboards import (
+    back,
+    housing_menu,
+    language_menu,
+    location_menu,
+    radius_menu,
+    restaurant_menu,
+)
 from app.bot.navigation.manager import NavigationMessageManager
 from app.bot.services import get_or_create_user, latest_search, main_screen
-from app.bot.states import FilterFlow, LocationFlow
+from app.bot.states import FilterFlow, LocationFlow, RestaurantFlow
 from app.core.config import get_settings
 from app.core.i18n import i18n
 from app.crous.client import CrousClient
 from app.crous.exceptions import CrousUnavailable
 from app.crous.models import CrousListing
-from app.db.models import Listing, Search, SearchListing, User
+from app.db.models import FavoriteRestaurant, Listing, Search, SearchListing, User
 from app.geocoding.base import GeocodingProvider
 from app.geocoding.models import GeocodedPlace
 from app.monitoring.locks import SearchLock
 from app.monitoring.service import SnapshotDeliveryError, synchronize_search
 from app.payments.stripe import StripeError, create_checkout_session
+from app.restaurants.client import CrousRestaurantClient, RestaurantUnavailable, restaurant_from_api
+from app.restaurants.renderer import menu_text, restaurant_information
+from app.restaurants.service import (
+    RestaurantDuplicateError,
+    RestaurantLimitError,
+    favorites,
+    remove_favorite,
+    save_favorite,
+    set_primary,
+)
+from app.restaurants.service import get_subscription as get_restaurant_subscription
 from app.searches.filters import (
     FilterValidationError,
     normalized_format,
@@ -190,6 +209,23 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
         ])
         await nav.render_text_screen(bot, session, user, i18n.text(language, "monitoring-page", status=i18n.text(language, "enabled" if enabled else "disabled")), keyboard, "monitoring")
 
+    async def render_housing(bot: Bot, session: AsyncSession, user: User) -> None:
+        search, version = await latest_search(session, user), user.active_navigation_version + 1
+        await nav.render_text_screen(bot, session, user, i18n.text(user.language, "housing-monitoring"), housing_menu(user.language, version, monitoring_enabled=bool(search and search.is_active)), "housing")
+
+    async def render_restaurant(bot: Bot, session: AsyncSession, user: User) -> None:
+        subscription = await get_restaurant_subscription(session, user)
+        primary = await session.get(FavoriteRestaurant, subscription.primary_restaurant_id) if subscription.primary_restaurant_id else None
+        value = primary.name if primary else i18n.text(user.language, "restaurant-primary-none")
+        version = user.active_navigation_version + 1
+        await nav.render_text_screen(bot, session, user, i18n.text(user.language, "restaurant-primary", value=value), restaurant_menu(user.language, version), "restaurant")
+
+    async def render_favorites(bot: Bot, session: AsyncSession, user: User) -> None:
+        values, version = await favorites(session, user), user.active_navigation_version + 1
+        rows = [[InlineKeyboardButton(text=value.name, callback_data=NavCallback(action="restaurant-manage", entity=value.id, version=version).pack())] for value in values]
+        rows.append([InlineKeyboardButton(text=i18n.text(user.language, "back"), callback_data=NavCallback(action="restaurant", version=version).pack())])
+        await nav.render_text_screen(bot, session, user, i18n.text(user.language, "restaurant-favorites" if values else "restaurant-no-favorites"), InlineKeyboardMarkup(inline_keyboard=rows), "restaurant-favorites")
+
     @router.message(Command("start", "menu"))
     async def start(message: Message, state: FSMContext) -> None:
         async with session_factory() as session:
@@ -276,6 +312,108 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             action = callback_data.action
             if action == "menu":
                 await state.clear(); await main_screen(callback.bot, session, user, nav)
+            elif action == "housing":
+                await state.clear(); await render_housing(callback.bot, session, user)
+            elif action == "restaurant":
+                await state.clear(); await render_restaurant(callback.bot, session, user)
+            elif action == "restaurant-select":
+                version = user.active_navigation_version + 1
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=i18n.text(user.language, "restaurant-near"), callback_data=NavCallback(action="restaurant-near", version=version).pack())],
+                    [InlineKeyboardButton(text=i18n.text(user.language, "restaurant-search-city"), callback_data=NavCallback(action="restaurant-search-city", version=version).pack())],
+                    [InlineKeyboardButton(text=i18n.text(user.language, "restaurant-favorites"), callback_data=NavCallback(action="restaurant-favorites", version=version).pack())],
+                    [InlineKeyboardButton(text=i18n.text(user.language, "back"), callback_data=NavCallback(action="restaurant", version=version).pack())],
+                ])
+                await nav.render_text_screen(callback.bot, session, user, i18n.text(user.language, "restaurant-select-prompt"), keyboard, "restaurant-select")
+            elif action == "restaurant-favorites":
+                await render_favorites(callback.bot, session, user)
+            elif action == "restaurant-search-city":
+                await state.set_state(RestaurantFlow.city_input)
+                version = user.active_navigation_version + 1
+                await nav.render_text_screen(callback.bot, session, user, i18n.text(user.language, "restaurant-search-prompt"), back(user.language, version, "restaurant-select"), "restaurant-city")
+            elif action == "restaurant-near":
+                await state.set_state(RestaurantFlow.location_input)
+                await callback.message.answer(i18n.text(user.language, "restaurant-location-prompt"), reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=i18n.text(user.language, "send-location"), request_location=True)]], resize_keyboard=True, one_time_keyboard=True))
+            elif action == "restaurant-save-result":
+                rows = (await state.get_data()).get("restaurant_results", [])
+                if callback_data.entity < len(rows) and isinstance(rows[callback_data.entity], dict):
+                    try:
+                        await save_favorite(session, user, restaurant_from_api(rows[callback_data.entity]))
+                    except RestaurantDuplicateError:
+                        await callback.message.answer(i18n.text(user.language, "restaurant-duplicate"))
+                    except RestaurantLimitError:
+                        await callback.message.answer(i18n.text(user.language, "restaurant-limit"))
+                    else:
+                        await callback.message.answer(i18n.text(user.language, "restaurant-saved"))
+                await render_restaurant(callback.bot, session, user)
+            elif action == "restaurant-info" or action == "restaurant-menu":
+                subscription = await get_restaurant_subscription(session, user)
+                favorite = await session.get(FavoriteRestaurant, subscription.primary_restaurant_id) if subscription.primary_restaurant_id else None
+                if favorite is None:
+                    await callback.message.answer(i18n.text(user.language, "restaurant-primary-none"))
+                else:
+                    client = CrousRestaurantClient()
+                    try:
+                        if action == "restaurant-info":
+                            restaurant = next((item for item in await client.restaurants() if item.code == favorite.restaurant_code), None)
+                            await callback.message.answer(restaurant_information(restaurant, user.language) if restaurant else i18n.text(user.language, "restaurant-menu-unavailable"))
+                        else:
+                            version = user.active_navigation_version + 1
+                            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                                [InlineKeyboardButton(text=i18n.text(user.language, "menu-today"), callback_data=NavCallback(action="restaurant-menu-day", entity=0, version=version).pack())],
+                                [InlineKeyboardButton(text=i18n.text(user.language, "menu-tomorrow"), callback_data=NavCallback(action="restaurant-menu-day", entity=1, version=version).pack())],
+                                [InlineKeyboardButton(text=i18n.text(user.language, "menu-next-seven-days"), callback_data=NavCallback(action="restaurant-menu-day", entity=7, version=version).pack())],
+                                [InlineKeyboardButton(text=i18n.text(user.language, "back"), callback_data=NavCallback(action="restaurant", version=version).pack())],
+                            ])
+                            await nav.render_text_screen(callback.bot, session, user, i18n.text(user.language, "restaurant-menu"), keyboard, "restaurant-menu")
+                    except RestaurantUnavailable:
+                        await callback.message.answer(i18n.text(user.language, "restaurant-menu-unavailable"))
+                    finally:
+                        await client.close()
+            elif action == "restaurant-menu-day":
+                subscription = await get_restaurant_subscription(session, user)
+                favorite = await session.get(FavoriteRestaurant, subscription.primary_restaurant_id) if subscription.primary_restaurant_id else None
+                if favorite:
+                    client = CrousRestaurantClient()
+                    try:
+                        for offset in (range(7) if callback_data.entity == 7 else (callback_data.entity,)):
+                            await callback.message.answer(menu_text(await client.menu(favorite.restaurant_code, date.fromordinal(date.today().toordinal() + offset)), user.language))
+                    except RestaurantUnavailable:
+                        await callback.message.answer(i18n.text(user.language, "restaurant-menu-unavailable"))
+                    finally:
+                        await client.close()
+            elif action == "restaurant-delivery":
+                subscription = await get_restaurant_subscription(session, user)
+                version = user.active_navigation_version + 1
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=i18n.text(user.language, "delivery-disable" if subscription.delivery_enabled else "delivery-enable"), callback_data=NavCallback(action="restaurant-delivery-toggle", version=version).pack())],
+                    [InlineKeyboardButton(text="08:00", callback_data=NavCallback(action="restaurant-delivery-time", entity=8, version=version).pack()), InlineKeyboardButton(text="12:00", callback_data=NavCallback(action="restaurant-delivery-time", entity=12, version=version).pack()), InlineKeyboardButton(text="18:00", callback_data=NavCallback(action="restaurant-delivery-time", entity=18, version=version).pack())],
+                    [InlineKeyboardButton(text=i18n.text(user.language, "back"), callback_data=NavCallback(action="restaurant", version=version).pack())],
+                ])
+                await nav.render_text_screen(callback.bot, session, user, i18n.text(user.language, "delivery-time"), keyboard, "restaurant-delivery")
+            elif action == "restaurant-delivery-toggle":
+                subscription = await get_restaurant_subscription(session, user)
+                subscription.delivery_enabled = not subscription.delivery_enabled
+                await callback.message.answer(i18n.text(user.language, "restaurant-delivery-enabled" if subscription.delivery_enabled else "restaurant-delivery-disabled"))
+                await render_restaurant(callback.bot, session, user)
+            elif action == "restaurant-delivery-time":
+                subscription = await get_restaurant_subscription(session, user)
+                subscription.delivery_time = subscription.delivery_time.replace(hour=callback_data.entity, minute=0)
+                await callback.message.answer(i18n.text(user.language, "restaurant-delivery-time-saved", value=subscription.delivery_time.strftime("%H:%M")))
+                await render_restaurant(callback.bot, session, user)
+            elif action == "restaurant-manage":
+                favorite = await session.scalar(select(FavoriteRestaurant).where(FavoriteRestaurant.id == callback_data.entity, FavoriteRestaurant.user_id == user.id))
+                if favorite:
+                    version = user.active_navigation_version + 1
+                    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                        [InlineKeyboardButton(text=i18n.text(user.language, "restaurant-set-primary"), callback_data=NavCallback(action="restaurant-set-primary", entity=favorite.id, version=version).pack())],
+                        [InlineKeyboardButton(text=i18n.text(user.language, "restaurant-remove"), callback_data=NavCallback(action="restaurant-remove", entity=favorite.id, version=version).pack())],
+                    ])
+                    await nav.render_text_screen(callback.bot, session, user, favorite.name, keyboard, "restaurant-favorite")
+            elif action == "restaurant-set-primary":
+                await set_primary(session, user, callback_data.entity); await render_restaurant(callback.bot, session, user)
+            elif action == "restaurant-remove":
+                await remove_favorite(session, user, callback_data.entity); await render_favorites(callback.bot, session, user)
             elif action == "location":
                 await state.clear(); await render_location(callback.bot, session, user)
             elif action == "language":
@@ -558,6 +696,44 @@ def build_router(session_factory: async_sessionmaker[AsyncSession], geocoder: Ge
             else:
                 await state.clear()
                 await render_filters(message.bot, session, user)
+            await session.commit()
+
+    async def present_restaurants(message: Message, session: AsyncSession, user: User, state: FSMContext, rows: list[object]) -> None:
+        data = [row for row in rows if isinstance(row, dict)]
+        await state.update_data(restaurant_results=data)
+        version = user.active_navigation_version + 1
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=str(row.get("nom") or row.get("code")), callback_data=NavCallback(action="restaurant-save-result", entity=index, version=version).pack())]
+            for index, row in enumerate(data[:20])
+        ] + [[InlineKeyboardButton(text=i18n.text(user.language, "back"), callback_data=NavCallback(action="restaurant", version=version).pack())]])
+        await nav.render_text_screen(message.bot, session, user, i18n.text(user.language, "restaurant-select"), keyboard, "restaurant-results")
+
+    @router.message(RestaurantFlow.city_input)
+    async def restaurant_city_input(message: Message, state: FSMContext) -> None:
+        if not message.text or len(message.text) > 200: return
+        async with session_factory() as session:
+            user, client = await user_for(message, session), CrousRestaurantClient()
+            try:
+                values = await client.search_city(message.text)
+                await present_restaurants(message, session, user, state, [value.metadata for value in values])
+            except RestaurantUnavailable:
+                await message.answer(i18n.text(user.language, "restaurant-menu-unavailable"))
+            finally:
+                await client.close()
+            await session.commit()
+
+    @router.message(RestaurantFlow.location_input)
+    async def restaurant_location_input(message: Message, state: FSMContext) -> None:
+        if not message.location: return
+        async with session_factory() as session:
+            user, client = await user_for(message, session), CrousRestaurantClient()
+            try:
+                values = await client.near(message.location.latitude, message.location.longitude)
+                await present_restaurants(message, session, user, state, [value.metadata for value in values])
+            except RestaurantUnavailable:
+                await message.answer(i18n.text(user.language, "restaurant-menu-unavailable"), reply_markup=ReplyKeyboardRemove())
+            finally:
+                await client.close()
             await session.commit()
 
     @router.message(FilterFlow.surface_input)

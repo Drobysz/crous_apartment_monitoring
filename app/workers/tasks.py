@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any, cast
+from zoneinfo import ZoneInfo
 
 import structlog
 from aiogram import Bot
@@ -8,19 +10,24 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from arq import Retry, cron, func
 from arq.connections import RedisSettings
+from sqlalchemy import func as sql_func
 from sqlalchemy import select
 
 from app.core.config import get_settings
 from app.core.i18n import i18n
 from app.core.logging import configure_logging
 from app.crous.client import CrousClient
-from app.db.models import Search, User
+from app.db.models import Listing, Search, SearchListing, User
 from app.db.session import SessionLocal
 from app.monitoring.locks import SearchLock
 from app.monitoring.service import synchronize_search
+from app.restaurants.client import CrousRestaurantClient
+from app.restaurants.renderer import menu_text
+from app.restaurants.service import due_deliveries, record_daily_statistic, start_delivery
 from app.subscriptions.service import expire_subscriptions, get_monitoring_interval
 
 logger = structlog.get_logger(__name__)
+PARIS = ZoneInfo("Europe/Paris")
 
 
 async def enqueue_active_searches(ctx: dict[str, object]) -> None:
@@ -51,8 +58,9 @@ async def enqueue_active_searches(ctx: dict[str, object]) -> None:
             if search.last_checked_at is None or (now - search.last_checked_at).total_seconds() >= interval:
                 selected.append((search.id, int(now.timestamp() // interval)))
         await session.commit()
+    redis = cast(Any, ctx["redis"])
     for search_id, slot in selected:
-        await ctx["redis"].enqueue_job("sync_search", search_id, _job_id=f"crous-sync:{search_id}:{slot}")  # type: ignore[attr-defined]
+        await redis.enqueue_job("sync_search", search_id, _job_id=f"crous-sync:{search_id}:{slot}")
     logger.info("search_sync_jobs_enqueued", count=len(selected))
 
 
@@ -97,10 +105,58 @@ async def startup(_: dict[str, object]) -> None:
     configure_logging(get_settings().log_level)
 
 
+async def enqueue_daily_notifications(ctx: dict[str, object]) -> None:
+    local = datetime.now(UTC).astimezone(PARIS)
+    redis = cast(Any, ctx["redis"])
+    if local.hour == 20 and local.minute == 0:
+        await redis.enqueue_job("send_housing_statistics", local.date().isoformat(), _job_id=f"housing-statistics:{local.date().isoformat()}")
+    await redis.enqueue_job("deliver_restaurant_menus", _job_id=f"restaurant-delivery:{local:%Y-%m-%d:%H:%M}")
+
+
+async def send_housing_statistics(_: dict[str, object], day: str) -> None:
+    settings = get_settings()
+    if not settings.telegram_bot_token: return
+    bot = Bot(settings.telegram_bot_token.get_secret_value(), default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    try:
+        async with SessionLocal() as session:
+            rows = (await session.execute(select(Search, User).join(User, User.id == Search.user_id).where(Search.is_active, User.is_blocked.is_(False)))).all()
+            for search, user in rows:
+                cheapest, highest, count = (await session.execute(select(sql_func.min(Listing.price_cents), sql_func.max(Listing.price_cents), sql_func.count(sql_func.distinct(Listing.id))).select_from(SearchListing).join(Listing, Listing.id == SearchListing.listing_id).where(SearchListing.search_id == search.id, SearchListing.is_currently_available.is_(True)))).one()
+                if await record_daily_statistic(session, search, datetime.fromisoformat(day).date(), cheapest, highest, int(count or 0)) is None: continue
+                def money(value: int | None) -> str: return "—" if value is None else f"€{value // 100}.{value % 100:02d}"
+                try:
+                    await bot.send_message(user.telegram_chat_id, i18n.text(user.language, "daily-statistics-message", cheapest=money(cheapest), highest=money(highest), count=int(count or 0)))
+                except Exception as error:
+                    logger.warning("housing_statistics_notification_failed", search_id=search.id, reason=str(error))
+            await session.commit()
+    finally:
+        await bot.session.close()
+
+
+async def deliver_restaurant_menus(_: dict[str, object]) -> None:
+    settings = get_settings()
+    if not settings.telegram_bot_token: return
+    now, bot, client = datetime.now(UTC), Bot(settings.telegram_bot_token.get_secret_value(), default=DefaultBotProperties(parse_mode=ParseMode.HTML)), CrousRestaurantClient()
+    try:
+        async with SessionLocal() as session:
+            for user, _subscription, favorite in await due_deliveries(session, now):
+                delivery = await start_delivery(session, user, favorite, now)
+                if delivery is None: continue
+                try:
+                    message = await bot.send_message(user.telegram_chat_id, menu_text(await client.menu(favorite.restaurant_code, now.astimezone(PARIS).date()), user.language))
+                except Exception as error:
+                    delivery.status, delivery.error = "failed", str(error)
+                else:
+                    delivery.status, delivery.telegram_message_id, delivery.sent_at = "sent", message.message_id, now
+            await session.commit()
+    finally:
+        await client.close(); await bot.session.close()
+
+
 class WorkerSettings:
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
-    functions = [func(sync_search, max_tries=get_settings().monitoring_max_retries)]
-    cron_jobs = [cron(enqueue_active_searches, minute=set(range(0, 60, 1)), second=0)]
+    functions = [func(sync_search, max_tries=get_settings().monitoring_max_retries), send_housing_statistics, deliver_restaurant_menus]
+    cron_jobs = [cron(enqueue_active_searches, minute=set(range(0, 60, 1)), second=0), cron(enqueue_daily_notifications, minute=set(range(0, 60, 1)), second=5)]
     on_startup = startup
     keep_result = 0
     max_jobs = 10

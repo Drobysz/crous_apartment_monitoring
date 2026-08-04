@@ -97,6 +97,8 @@ docker compose exec proxy nginx -t
 - The worker expires Trial and Season entitlements, falls users back to Free, and sends a single expiration notice.
 - CROUS tool IDs are discovered through `/api/global/context`, because campaigns change by year.
 - Cards use the listing's primary image when available; a secure, bounded download fallback is used if Telegram cannot fetch it.
+- The same ARQ worker centrally schedules housing checks, the 20:00 Europe/Paris daily housing summary, and due restaurant-menu deliveries. Daily statistics are immutable per active search and local date.
+- Restaurant data and menus are supplied by the public CROUStillant API. It can expose restaurant names, address, opening status/hours, payment and transport information; the bot only renders fields returned by the API. A missing dated menu is shown as not published, and API failures are shown as unavailable. The public API is rate-limited and subject to its non-commercial terms; production deployments must retain the CROUStillant attribution requirement.
 
 ## Administration and operations bots
 
