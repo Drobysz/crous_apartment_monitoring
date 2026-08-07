@@ -467,12 +467,14 @@ class ReferralProgram(Timestamped, Base):
             "commission_rate_basis_points >= 0 AND commission_rate_basis_points <= 10000",
             name="ck_referral_program_rate",
         ),
+        UniqueConstraint("referral_code"),
+        UniqueConstraint("owner_telegram_user_id"),
     )
     id: Mapped[int] = mapped_column(primary_key=True)
-    referral_code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    referral_code: Mapped[str] = mapped_column(String(64), index=True)
     owner_telegram_username: Mapped[str] = mapped_column(String(33))
     owner_username_key: Mapped[str] = mapped_column(String(32), index=True)
-    owner_telegram_user_id: Mapped[int | None] = mapped_column(BigInteger, unique=True, index=True)
+    owner_telegram_user_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     commission_rate_basis_points: Mapped[int] = mapped_column(Integer, default=3000, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False, index=True)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), index=True)
