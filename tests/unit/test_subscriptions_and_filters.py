@@ -34,13 +34,35 @@ def test_filter_ranges_and_missing_listing_data_policy() -> None:
     assert parse_price_range("300 — 650") == (30_000, 65_000)
     assert parse_surface_range("15 m² - 35 m²") == (15.0, 35.0)
     search = Search(
-        user_id=1, location_display_name="Nancy", center_latitude=48.69, center_longitude=6.18,
-        bounds_west=6.1, bounds_north=48.8, bounds_east=6.3, bounds_south=48.6,
-        price_min_cents=30_000, price_max_cents=65_000, surface_min_m2=15, surface_max_m2=35,
+        user_id=1,
+        location_display_name="Nancy",
+        center_latitude=48.69,
+        center_longitude=6.18,
+        bounds_west=6.1,
+        bounds_north=48.8,
+        bounds_east=6.3,
+        bounds_south=48.6,
+        price_min_cents=30_000,
+        price_max_cents=65_000,
+        surface_min_m2=15,
+        surface_max_m2=35,
         accommodation_format="individuel",
     )
-    assert listing_matches_filters(CrousListing("1", "https://example.test/1", "Studio", price_cents=40_000, surface_min=20, surface_max=20, occupancy_type="Individuel"), search)
-    assert not listing_matches_filters(CrousListing("2", "https://example.test/2", "Unknown"), search)
+    assert listing_matches_filters(
+        CrousListing(
+            "1",
+            "https://example.test/1",
+            "Studio",
+            price_cents=40_000,
+            surface_min=20,
+            surface_max=20,
+            occupancy_type="Individuel",
+        ),
+        search,
+    )
+    assert not listing_matches_filters(
+        CrousListing("2", "https://example.test/2", "Unknown"), search
+    )
 
 
 def test_filter_bounds_are_inclusive_and_support_a_single_bound() -> None:
@@ -63,7 +85,14 @@ def test_filter_bounds_are_inclusive_and_support_a_single_bound() -> None:
         surface_max_m2=20,
     )
     assert listing_matches_filters(
-        CrousListing("boundary", "https://example.test/boundary", "Studio", price_cents=30_000, surface_min=20, surface_max=20),
+        CrousListing(
+            "boundary",
+            "https://example.test/boundary",
+            "Studio",
+            price_cents=30_000,
+            surface_min=20,
+            surface_max=20,
+        ),
         search,
     )
 
@@ -95,8 +124,12 @@ def test_legacy_accommodation_format_remains_compatible() -> None:
         bounds_south=48.6,
         accommodation_format="individuel",
     )
-    individual = CrousListing("individual", "https://example.test/individual", "Studio", occupancy_type="Individuel")
-    colocation = CrousListing("colocation", "https://example.test/colocation", "Room", occupancy_type="Colocation")
+    individual = CrousListing(
+        "individual", "https://example.test/individual", "Studio", occupancy_type="Individuel"
+    )
+    colocation = CrousListing(
+        "colocation", "https://example.test/colocation", "Room", occupancy_type="Colocation"
+    )
     assert listing_matches_filters(individual, search)
     assert not listing_matches_filters(colocation, search)
     search.accommodation_format = "colocation"
@@ -124,8 +157,12 @@ async def test_trial_is_available_once_and_falls_back_to_free() -> None:
         first = await activate_trial(session, user, datetime(2026, 7, 10, tzinfo=UTC))
         assert first is not None
         assert await activate_trial(session, user) is None
-        assert (await get_effective_subscription(session, user, datetime(2026, 7, 10, 1, tzinfo=UTC))).plan.code == "trial"
-        assert (await get_effective_subscription(session, user, datetime(2026, 7, 11, tzinfo=UTC))).plan.code == "free"
+        assert (
+            await get_effective_subscription(session, user, datetime(2026, 7, 10, 1, tzinfo=UTC))
+        ).plan.code == "trial"
+        assert (
+            await get_effective_subscription(session, user, datetime(2026, 7, 11, tzinfo=UTC))
+        ).plan.code == "free"
         assert await plan_by_code(session, "season") is not None
     await engine.dispose()
 
@@ -148,7 +185,10 @@ async def test_an_in_season_purchase_supersedes_an_active_trial() -> None:
         await activate_subscription(session, user, season_plan, source="stripe", now=purchased_at)
 
         assert (await get_effective_subscription(session, user, purchased_at)).plan.code == "season"
-        statuses = [subscription.status for subscription in (await session.scalars(select(UserSubscription))).all()]
+        statuses = [
+            subscription.status
+            for subscription in (await session.scalars(select(UserSubscription))).all()
+        ]
         assert statuses == ["superseded", "active"]
     await engine.dispose()
 
@@ -171,7 +211,9 @@ async def test_test_reset_revokes_entitlement_but_does_not_remove_purchases() ->
 
 
 @pytest.mark.asyncio
-async def test_checkout_uses_database_price_data_without_a_predefined_product(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_checkout_uses_database_price_data_without_a_predefined_product(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     requests: list[bytes] = []
 
     class FakeResponse:
@@ -201,8 +243,13 @@ async def test_checkout_uses_database_price_data_without_a_predefined_product(mo
         plan = SubscriptionPlan(code="season", name="Season", price_cents=1337)
         session.add_all((user, plan))
         await session.flush()
-        settings = Settings(stripe_secret_key="sk_test_example", public_base_url="https://bot.example.test")
-        assert await create_checkout_session(session, user, "season", settings) == "https://checkout.stripe.test/session"
+        settings = Settings(
+            stripe_secret_key="sk_test_example", public_base_url="https://bot.example.test"
+        )
+        assert (
+            await create_checkout_session(session, user, "season", settings)
+            == "https://checkout.stripe.test/session"
+        )
     assert parse_qs(requests[0].decode())["line_items[0][price_data][unit_amount]"] == ["1337"]
     assert "line_items[0][price]" not in parse_qs(requests[0].decode())
     await engine.dispose()

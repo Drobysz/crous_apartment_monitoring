@@ -47,11 +47,17 @@ async def lifespan(_: FastAPI):
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
         dispatcher = Dispatcher(storage=RedisStorage.from_url(settings.redis_url))
-        dispatcher.include_router(build_router(SessionLocal, PhotonProvider(), CrousClient(settings)))
+        dispatcher.include_router(
+            build_router(SessionLocal, PhotonProvider(), CrousClient(settings))
+        )
         if settings.run_mode == "webhook" and settings.public_base_url and settings.webhook_secret:
-            await bot.set_webhook(f"{str(settings.public_base_url).rstrip('/')}{settings.telegram_webhook_path}", secret_token=settings.webhook_secret.get_secret_value())
+            await bot.set_webhook(
+                f"{str(settings.public_base_url).rstrip('/')}{settings.telegram_webhook_path}",
+                secret_token=settings.webhook_secret.get_secret_value(),
+            )
     yield
-    if bot: await bot.session.close()
+    if bot:
+        await bot.session.close()
 
 
 app = FastAPI(title="CROUS Logement Bot", lifespan=lifespan)
@@ -60,8 +66,8 @@ app = FastAPI(title="CROUS Logement Bot", lifespan=lifespan)
 def payment_page(title: str, message: str, *, successful: bool) -> HTMLResponse:
     bot_url = str(settings.telegram_bot_url or "https://t.me/")
     return HTMLResponse(
-        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
-        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+        '<!doctype html><html lang="en"><head><meta charset="utf-8">'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
         f"<title>{escape(title)}</title><style>"
         "*{box-sizing:border-box}html,body{min-height:100%;margin:0}body{display:grid;place-items:center;"
         "background:#f5f5f7;color:#1d1d1f;font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;"
@@ -72,8 +78,8 @@ def payment_page(title: str, message: str, *, successful: bool) -> HTMLResponse:
         "h1{font-size:28px;letter-spacing:-.4px;margin:0 0 14px}p{font-size:17px;line-height:1.45;margin:0 0 30px;"
         "color:#424245}a{display:inline-block;background:#0071e3;color:#fff;text-decoration:none;border-radius:980px;"
         "padding:12px 20px;font-size:16px;font-weight:600}a:hover{background:#0077ed}</style></head>"
-        f"<body><main><div class=\"mark\">{'✓' if successful else '×'}</div><h1>{escape(title)}</h1>"
-        f"<p>{escape(message)}</p><a href=\"{escape(bot_url, quote=True)}\">Return to Telegram</a>"
+        f'<body><main><div class="mark">{"✓" if successful else "×"}</div><h1>{escape(title)}</h1>'
+        f'<p>{escape(message)}</p><a href="{escape(bot_url, quote=True)}">Return to Telegram</a>'
         "</main></body></html>"
     )
 
@@ -82,7 +88,9 @@ def operational_payment_confirmation(payment: ProcessedPayment) -> str:
     from app.core.i18n import i18n
 
     username = payment.user.telegram_username
-    recipient = f"@{username.lstrip('@')}" if username else f"Telegram ID {payment.user.telegram_user_id}"
+    recipient = (
+        f"@{username.lstrip('@')}" if username else f"Telegram ID {payment.user.telegram_user_id}"
+    )
     euros, cents = divmod(payment.plan.price_cents, 100)
     amount = f"{euros},{cents:02d} €"
     return "\n".join(
@@ -113,7 +121,9 @@ async def notify_payment_confirmation(payment: ProcessedPayment | None) -> None:
         try:
             await send_operational_notification(settings, operational_payment_confirmation(payment))
         except NotificationBotUnavailable:
-            logger.info("operational_payment_notification_skipped", reason="notification_bot_unavailable")
+            logger.info(
+                "operational_payment_notification_skipped", reason="notification_bot_unavailable"
+            )
         except Exception:
             logger.exception("operational_payment_notification_failed", user_id=payment.user.id)
 
@@ -133,31 +143,52 @@ async def notify_payment_confirmation(payment: ProcessedPayment | None) -> None:
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     client = CrousClient(settings)
-    try: healthy = await client.health_check()
-    finally: await client.close()
-    if not healthy: raise HTTPException(503, "CROUS unavailable")
+    try:
+        healthy = await client.health_check()
+    finally:
+        await client.close()
+    if not healthy:
+        raise HTTPException(503, "CROUS unavailable")
     return {"status": "ok"}
 
 
 @app.get(settings.payment_success_path)
 async def payment_success(session_id: str | None = None) -> HTMLResponse:
     if not session_id:
-        return payment_page("Payment could not be verified", "Return to Telegram and try the payment again.", successful=False)
+        return payment_page(
+            "Payment could not be verified",
+            "Return to Telegram and try the payment again.",
+            successful=False,
+        )
     try:
         checkout = await retrieve_checkout_session(session_id, settings)
         async with SessionLocal() as session:
             payment = await process_paid_checkout(session, checkout, settings)
             await session.commit()
         if payment is None:
-            return payment_page("Payment is being verified", "Stripe is still confirming the payment. You can close this page and return to Telegram.", successful=False)
+            return payment_page(
+                "Payment is being verified",
+                "Stripe is still confirming the payment. You can close this page and return to Telegram.",
+                successful=False,
+            )
         await notify_payment_confirmation(payment)
     except StripeError:
-        return payment_page("Payment is being verified", "Stripe is still confirming the payment. You can close this page and return to Telegram.", successful=False)
-    return payment_page("Payment completed", "Your subscription is active. You can close this page and return to the Telegram bot.", successful=True)
+        return payment_page(
+            "Payment is being verified",
+            "Stripe is still confirming the payment. You can close this page and return to Telegram.",
+            successful=False,
+        )
+    return payment_page(
+        "Payment completed",
+        "Your subscription is active. You can close this page and return to the Telegram bot.",
+        successful=True,
+    )
 
 
 @app.get(settings.payment_cancel_path)
-async def payment_cancel(user_id: int | None = None, plan_id: int | None = None, token: str | None = None) -> HTMLResponse:
+async def payment_cancel(
+    user_id: int | None = None, plan_id: int | None = None, token: str | None = None
+) -> HTMLResponse:
     if user_id is not None and plan_id is not None and token:
         try:
             valid_return = valid_payment_return_token(settings, user_id, plan_id, token)
@@ -171,28 +202,43 @@ async def payment_cancel(user_id: int | None = None, plan_id: int | None = None,
         if user and bot:
             from app.core.i18n import i18n
 
-            await bot.send_message(user.telegram_chat_id, i18n.text(user.language, "payment-cancelled"))
-    return payment_page("Payment was not completed", "No subscription was activated. You can close this page and return to the Telegram bot.", successful=False)
+            await bot.send_message(
+                user.telegram_chat_id, i18n.text(user.language, "payment-cancelled")
+            )
+    return payment_page(
+        "Payment was not completed",
+        "No subscription was activated. You can close this page and return to the Telegram bot.",
+        successful=False,
+    )
 
 
 @app.post(settings.telegram_webhook_path)
-async def telegram_webhook(update: dict[str, object], x_telegram_bot_api_secret_token: str | None = Header(default=None)) -> dict[str, bool]:
+async def telegram_webhook(
+    update: dict[str, object], x_telegram_bot_api_secret_token: str | None = Header(default=None)
+) -> dict[str, bool]:
     if not bot or not dispatcher or not settings.webhook_secret:
         raise HTTPException(503, "Webhook is not configured")
     if x_telegram_bot_api_secret_token != settings.webhook_secret.get_secret_value():
         raise HTTPException(403, "Invalid webhook secret")
     from aiogram.types import Update
+
     await dispatcher.feed_update(bot, Update.model_validate(update))
     return {"ok": True}
 
 
 @app.post(settings.stripe_webhook_path)
-async def stripe_webhook(request: Request, stripe_signature: str | None = Header(default=None)) -> dict[str, bool]:
+async def stripe_webhook(
+    request: Request, stripe_signature: str | None = Header(default=None)
+) -> dict[str, bool]:
     """Process Stripe's signed webhook as an idempotent payment-confirmation path."""
     if not settings.stripe_webhook_secret:
         raise HTTPException(503, "Stripe webhook is not configured")
     try:
-        event = verify_webhook(await request.body(), stripe_signature, settings.stripe_webhook_secret.get_secret_value())
+        event = verify_webhook(
+            await request.body(),
+            stripe_signature,
+            settings.stripe_webhook_secret.get_secret_value(),
+        )
     except StripeError as error:
         raise HTTPException(400, "Invalid Stripe webhook") from error
     try:

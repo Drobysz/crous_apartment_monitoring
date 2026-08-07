@@ -15,6 +15,7 @@ def photon_locale(locale: str) -> str:
 
 class PhotonProvider(GeocodingProvider):
     """CROUS-hosted Photon endpoint with a small, cacheable response surface."""
+
     def __init__(
         self,
         base_url: str = "https://trouverunlogement.lescrous.fr/photon/api",
@@ -81,7 +82,11 @@ class PhotonProvider(GeocodingProvider):
             if not city or identity in seen:
                 continue
             seen.add(identity)
-            display = f"{city} ({postcode})" if city and postcode else str(city or props.get("name") or "Lieu")
+            display = (
+                f"{city} ({postcode})"
+                if city and postcode
+                else str(city or props.get("name") or "Lieu")
+            )
             places.append(
                 GeocodedPlace(
                     display,
@@ -103,16 +108,14 @@ class PhotonProvider(GeocodingProvider):
         for feature in payload.get("features", []):
             props = feature.get("properties", {})
             address = props.get("address", {})
-            if not isinstance(address, dict) or str(address.get("country_code") or "").lower() != "fr":
+            if (
+                not isinstance(address, dict)
+                or str(address.get("country_code") or "").lower() != "fr"
+            ):
                 continue
             coordinates = feature.get("geometry", {}).get("coordinates", [None, None])
             bbox = feature.get("bbox")
-            if (
-                not isinstance(bbox, list)
-                or len(bbox) != 4
-                or None in coordinates
-                or None in bbox
-            ):
+            if not isinstance(bbox, list) or len(bbox) != 4 or None in coordinates or None in bbox:
                 continue
             city = next(
                 (

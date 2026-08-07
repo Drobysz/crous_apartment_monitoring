@@ -33,8 +33,12 @@ def upgrade() -> None:
         sa.Column("role", sa.String(length=16), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False),
         sa.Column("last_login_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
+        sa.Column(
+            "updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
         sa.CheckConstraint("role IN ('admin', 'superadmin')", name="ck_admins_role"),
         sa.PrimaryKeyConstraint("id", name="pk_admins"),
     )
@@ -50,13 +54,25 @@ def upgrade() -> None:
         sa.Column("csrf_token_hash", sa.String(length=64), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
-        sa.ForeignKeyConstraint(["admin_id"], ["admins.id"], name="fk_admin_sessions_admin_id_admins", ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["admin_id"],
+            ["admins.id"],
+            name="fk_admin_sessions_admin_id_admins",
+            ondelete="CASCADE",
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_admin_sessions"),
     )
     op.create_index("ix_admin_sessions_admin_id", "admin_sessions", ["admin_id"])
-    op.create_index("ix_admin_sessions_refresh_token_hash", "admin_sessions", ["refresh_token_hash"], unique=True)
+    op.create_index(
+        "ix_admin_sessions_refresh_token_hash",
+        "admin_sessions",
+        ["refresh_token_hash"],
+        unique=True,
+    )
     op.create_index("ix_admin_sessions_expires_at", "admin_sessions", ["expires_at"])
 
     op.create_table(
@@ -67,8 +83,15 @@ def upgrade() -> None:
         sa.Column("target_type", sa.String(length=64), nullable=False),
         sa.Column("target_id", sa.String(length=64), nullable=True),
         sa.Column("metadata_json", sa.JSON(), nullable=True),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()),
-        sa.ForeignKeyConstraint(["actor_admin_id"], ["admins.id"], name="fk_admin_audits_actor_admin_id_admins", ondelete="SET NULL"),
+        sa.Column(
+            "created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.func.now()
+        ),
+        sa.ForeignKeyConstraint(
+            ["actor_admin_id"],
+            ["admins.id"],
+            name="fk_admin_audits_actor_admin_id_admins",
+            ondelete="SET NULL",
+        ),
         sa.PrimaryKeyConstraint("id", name="pk_admin_audits"),
     )
     op.create_index("ix_admin_audits_actor_admin_id", "admin_audits", ["actor_admin_id"])

@@ -98,7 +98,11 @@ async def test_changed_snapshot_replaces_only_its_own_message_group() -> None:
     assert bot.sent == [1, 2, 3, 4]
     assert bot.deleted == [1, 2]
     async with factory() as session:
-        active = (await session.scalars(select(SearchDisplayGroup).where(SearchDisplayGroup.status == "active"))).all()
+        active = (
+            await session.scalars(
+                select(SearchDisplayGroup).where(SearchDisplayGroup.status == "active")
+            )
+        ).all()
         messages = (await session.scalars(select(SearchDisplayMessage))).all()
         assert len(active) == 1
         assert active[0].listing_count == 2
@@ -151,13 +155,17 @@ async def test_unchanged_snapshot_refreshes_stored_image_url() -> None:
     crous = FakeCrous(listing("one", image_url="https://crous.example/media/one.jpg"))
     assert await synchronize_search(factory, bot, crous, search_id) == "changed"  # type: ignore[arg-type]
 
-    crous.item = listing("one", image_url="https://crous.example/media/cache/resolve/preview/one.jpg")
+    crous.item = listing(
+        "one", image_url="https://crous.example/media/cache/resolve/preview/one.jpg"
+    )
     assert await synchronize_search(factory, bot, crous, search_id) == "unchanged"  # type: ignore[arg-type]
 
     async with factory() as session:
         stored = await session.scalar(select(Listing).where(Listing.external_id == "one"))
         assert stored is not None
-        assert stored.primary_image_url == "https://crous.example/media/cache/resolve/preview/one.jpg"
+        assert (
+            stored.primary_image_url == "https://crous.example/media/cache/resolve/preview/one.jpg"
+        )
     await engine.dispose()
 
 
@@ -194,7 +202,16 @@ async def test_delivery_failure_keeps_previous_active_group() -> None:
         user = User(telegram_user_id=2, telegram_chat_id=43, language="ru")
         session.add(user)
         await session.flush()
-        search = Search(user_id=user.id, location_display_name="Nancy", center_latitude=48.69, center_longitude=6.18, bounds_west=6.1, bounds_north=48.8, bounds_east=6.3, bounds_south=48.6)
+        search = Search(
+            user_id=user.id,
+            location_display_name="Nancy",
+            center_latitude=48.69,
+            center_longitude=6.18,
+            bounds_west=6.1,
+            bounds_north=48.8,
+            bounds_east=6.3,
+            bounds_south=48.6,
+        )
         session.add(search)
         await session.commit()
         search_id = search.id
@@ -205,7 +222,11 @@ async def test_delivery_failure_keeps_previous_active_group() -> None:
     with pytest.raises(SnapshotDeliveryError):
         await synchronize_search(factory, bot, crous, search_id)  # type: ignore[arg-type]
     async with factory() as session:
-        active = (await session.scalars(select(SearchDisplayGroup).where(SearchDisplayGroup.status == "active"))).all()
+        active = (
+            await session.scalars(
+                select(SearchDisplayGroup).where(SearchDisplayGroup.status == "active")
+            )
+        ).all()
         assert len(active) == 1
         assert active[0].fingerprint != canonical_snapshot(crous.items)[1]
     await engine.dispose()

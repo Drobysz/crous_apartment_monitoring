@@ -8,7 +8,9 @@ class Bounds:
     north: float
     east: float
     south: float
-    def as_crous(self) -> str: return f"{self.west}_{self.north}_{self.east}_{self.south}"
+
+    def as_crous(self) -> str:
+        return f"{self.west}_{self.north}_{self.east}_{self.south}"
 
 
 @dataclass

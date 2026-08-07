@@ -50,7 +50,9 @@ def preview_image_url(base_url: str, media_key: str) -> str:
     return urljoin(base_url.rstrip("/") + "/", f"media/cache/resolve/preview/{encoded_key}")
 
 
-def parse_search_response(payload: dict[str, Any], base_url: str, tool_id: int) -> list[CrousListing]:
+def parse_search_response(
+    payload: dict[str, Any], base_url: str, tool_id: int
+) -> list[CrousListing]:
     results = payload.get("results")
     if not isinstance(results, dict) or not isinstance(results.get("items"), list):
         raise CrousParseError("CROUS response does not have results.items")
@@ -77,9 +79,26 @@ def parse_listing(item: dict[str, Any], base_url: str, tool_id: int) -> CrousLis
         for entry in item.get("equipments", [])
         if (label := normalize_space(entry.get("label"))) is not None
     ]
-    sanitary = ", ".join(entry for entry in equipment if entry.lower() in {"wc", "douche", "baignoire"}) or None
-    kitchen = ", ".join(entry for entry in equipment if any(x in entry.lower() for x in ("frigo", "plaque", "évier", "micro-onde"))) or None
-    beds = ", ".join(f"{entry.get('count')} {entry.get('type')}" for entry in item.get("beds", []) if entry.get("count")) or None
+    sanitary = (
+        ", ".join(entry for entry in equipment if entry.lower() in {"wc", "douche", "baignoire"})
+        or None
+    )
+    kitchen = (
+        ", ".join(
+            entry
+            for entry in equipment
+            if any(x in entry.lower() for x in ("frigo", "plaque", "évier", "micro-onde"))
+        )
+        or None
+    )
+    beds = (
+        ", ".join(
+            f"{entry.get('count')} {entry.get('type')}"
+            for entry in item.get("beds", [])
+            if entry.get("count")
+        )
+        or None
+    )
     media = item.get("medias") or residence.get("medias") or []
     image = next((entry.get("src") for entry in media if entry.get("src")), None)
     image_url = preview_image_url(base_url, image) if image else None
@@ -90,12 +109,20 @@ def parse_listing(item: dict[str, Any], base_url: str, tool_id: int) -> CrousLis
         title=normalize_space(item.get("label")) or external_id,
         residence_name=normalize_space(residence.get("label")),
         address=normalize_space(residence.get("address")),
-        latitude=location.get("lat"), longitude=location.get("lon"),
+        latitude=location.get("lat"),
+        longitude=location.get("lon"),
         price_cents=int(price) if price is not None else None,
         price_original=price_from_cents(int(price)) if price is not None else None,
-        surface_min=(item.get("area") or {}).get("min"), surface_max=(item.get("area") or {}).get("max"),
-        surface_original=surface_text((item.get("area") or {}).get("min"), (item.get("area") or {}).get("max")),
+        surface_min=(item.get("area") or {}).get("min"),
+        surface_max=(item.get("area") or {}).get("max"),
+        surface_original=surface_text(
+            (item.get("area") or {}).get("min"), (item.get("area") or {}).get("max")
+        ),
         occupancy_type=", ".join(str(mode.get("type", "")) for mode in modes) or None,
-        bed_information=beds, sanitary_information=sanitary, kitchen_information=kitchen,
-        equipment=", ".join(equipment) or None, primary_image_url=image_url, raw_payload=item,
+        bed_information=beds,
+        sanitary_information=sanitary,
+        kitchen_information=kitchen,
+        equipment=", ".join(equipment) or None,
+        primary_image_url=image_url,
+        raw_payload=item,
     )

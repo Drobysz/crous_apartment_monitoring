@@ -33,7 +33,13 @@ async def test_admin_sessions_are_signed_rotated_and_bound_to_an_active_admin() 
         await connection.run_sync(Base.metadata.create_all)
     async with factory() as session:
         password_hash = await hash_password("AsecurePassword9")
-        admin = Admin(name="Operations", username="@gogona", username_key="gogona", password_hash=password_hash, role="superadmin")
+        admin = Admin(
+            name="Operations",
+            username="@gogona",
+            username_key="gogona",
+            password_hash=password_hash,
+            role="superadmin",
+        )
         session.add_all((admin, User(telegram_user_id=99, telegram_chat_id=99, language="en")))
         await session.flush()
         tokens = await create_session(session, admin, settings)

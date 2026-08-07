@@ -18,9 +18,16 @@ class FilterValidationError(ValueError):
 
 type Bound = Decimal | None
 _NUMBER = r"[+-]?(?:\d+(?:[,.]\d+)?|[,.]\d+)"
-_RANGE = re.compile(rf"^\s*(?P<minimum>{_NUMBER})\s*(?:-|to|à|до)\s*(?P<maximum>{_NUMBER})\s*$", re.IGNORECASE)
-_MINIMUM = re.compile(rf"^\s*(?:>=|≥|min(?:imum)?\s*|from\s*)?(?P<minimum>{_NUMBER})\s*$", re.IGNORECASE)
-_MAXIMUM = re.compile(rf"^\s*(?:<=|≤|max(?:imum)?\s*|up\s+to\s*|jusqu(?:’|')?à\s*|до\s*)(?P<maximum>{_NUMBER})\s*$", re.IGNORECASE)
+_RANGE = re.compile(
+    rf"^\s*(?P<minimum>{_NUMBER})\s*(?:-|to|à|до)\s*(?P<maximum>{_NUMBER})\s*$", re.IGNORECASE
+)
+_MINIMUM = re.compile(
+    rf"^\s*(?:>=|≥|min(?:imum)?\s*|from\s*)?(?P<minimum>{_NUMBER})\s*$", re.IGNORECASE
+)
+_MAXIMUM = re.compile(
+    rf"^\s*(?:<=|≤|max(?:imum)?\s*|up\s+to\s*|jusqu(?:’|')?à\s*|до\s*)(?P<maximum>{_NUMBER})\s*$",
+    re.IGNORECASE,
+)
 
 
 def _decimal(raw: str) -> Decimal:
@@ -77,16 +84,22 @@ def parse_range(value: str, *, maximum: Decimal, currency: bool = False) -> tupl
     return minimum, maximum_value
 
 
-def parse_price_range(value: str, settings: Settings | None = None) -> tuple[int | None, int | None]:
+def parse_price_range(
+    value: str, settings: Settings | None = None
+) -> tuple[int | None, int | None]:
     settings = settings or get_settings()
-    low, high = parse_range(value, maximum=Decimal(str(settings.max_filter_price_euros)), currency=True)
+    low, high = parse_range(
+        value, maximum=Decimal(str(settings.max_filter_price_euros)), currency=True
+    )
     return (
         int(low * 100) if low is not None else None,
         int(high * 100) if high is not None else None,
     )
 
 
-def parse_surface_range(value: str, settings: Settings | None = None) -> tuple[float | None, float | None]:
+def parse_surface_range(
+    value: str, settings: Settings | None = None
+) -> tuple[float | None, float | None]:
     settings = settings or get_settings()
     low, high = parse_range(value, maximum=Decimal(str(settings.max_filter_surface_m2)))
     return float(low) if low is not None else None, float(high) if high is not None else None

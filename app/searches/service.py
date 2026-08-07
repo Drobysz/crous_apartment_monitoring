@@ -52,7 +52,14 @@ def radius_bounds(latitude: float, longitude: float, radius_km: float) -> Bounds
         raise InvalidBounds("Invalid point or radius")
     latitude_delta = radius_km / 110.574
     longitude_delta = radius_km / (111.320 * max(math.cos(math.radians(latitude)), 0.01))
-    return validate_bounds(Bounds(longitude - longitude_delta, latitude + latitude_delta, longitude + longitude_delta, latitude - latitude_delta))
+    return validate_bounds(
+        Bounds(
+            longitude - longitude_delta,
+            latitude + latitude_delta,
+            longitude + longitude_delta,
+            latitude - latitude_delta,
+        )
+    )
 
 
 def listing_is_within_bounds(listing: CrousListing, bounds: Bounds) -> bool:
@@ -67,8 +74,15 @@ def listing_is_within_bounds(listing: CrousListing, bounds: Bounds) -> bool:
     return bounds.west <= longitude <= bounds.east and bounds.south <= latitude <= bounds.north
 
 
-def canonical_zone_key(bounds: Bounds, tool_id: int, filters: dict[str, object] | None = None) -> str:
+def canonical_zone_key(
+    bounds: Bounds, tool_id: int, filters: dict[str, object] | None = None
+) -> str:
     import hashlib
     import json
-    payload = {"bounds": [round(v, 5) for v in (bounds.west, bounds.north, bounds.east, bounds.south)], "tool": tool_id, "filters": filters or {}}
+
+    payload = {
+        "bounds": [round(v, 5) for v in (bounds.west, bounds.north, bounds.east, bounds.south)],
+        "tool": tool_id,
+        "filters": filters or {},
+    }
     return "crous:zone:" + hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()

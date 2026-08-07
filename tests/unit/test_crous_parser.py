@@ -36,7 +36,8 @@ def test_preview_image_url_encodes_media_filename_without_changing_key_path() ->
 
 
 def test_malformed_payload_is_not_treated_as_empty_results() -> None:
-    with pytest.raises(CrousParseError): parse_search_response({}, "https://example.com", 1)
+    with pytest.raises(CrousParseError):
+        parse_search_response({}, "https://example.com", 1)
 
 
 def test_unavailable_json_records_are_excluded_without_html_fallback() -> None:

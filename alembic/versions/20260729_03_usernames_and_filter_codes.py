@@ -18,10 +18,14 @@ depends_on = None
 def upgrade() -> None:
     op.add_column("users", sa.Column("telegram_username", sa.String(length=32), nullable=True))
     op.create_index("ix_users_telegram_username", "users", ["telegram_username"])
-    op.execute("UPDATE searches SET accommodation_format = 'individual' WHERE accommodation_format = 'individuel'")
+    op.execute(
+        "UPDATE searches SET accommodation_format = 'individual' WHERE accommodation_format = 'individuel'"
+    )
 
 
 def downgrade() -> None:
-    op.execute("UPDATE searches SET accommodation_format = 'individuel' WHERE accommodation_format = 'individual'")
+    op.execute(
+        "UPDATE searches SET accommodation_format = 'individuel' WHERE accommodation_format = 'individual'"
+    )
     op.drop_index("ix_users_telegram_username", table_name="users")
     op.drop_column("users", "telegram_username")

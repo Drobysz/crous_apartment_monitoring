@@ -19,10 +19,14 @@ logger = structlog.get_logger(__name__)
 class CrousClient:
     """Public CROUS API client; never uses authenticated sessions or bypasses protections."""
 
-    def __init__(self, settings: Settings | None = None, client: httpx.AsyncClient | None = None) -> None:
+    def __init__(
+        self, settings: Settings | None = None, client: httpx.AsyncClient | None = None
+    ) -> None:
         self.settings = settings or get_settings()
         self.base_url = str(self.settings.crous_base_url).rstrip("/")
-        self.client = client or httpx.AsyncClient(timeout=httpx.Timeout(20, connect=8), follow_redirects=False)
+        self.client = client or httpx.AsyncClient(
+            timeout=httpx.Timeout(20, connect=8), follow_redirects=False
+        )
         self._tool: Tool | None = None
 
     async def close(self) -> None:

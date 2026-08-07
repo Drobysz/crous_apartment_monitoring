@@ -22,7 +22,9 @@ class SafeImageDownloader:
 
     async def download(self, url: str) -> DownloadedImage:
         validate_image_url(url, self.trusted_hosts)
-        async with httpx.AsyncClient(follow_redirects=False, timeout=httpx.Timeout(20, connect=5)) as client:
+        async with httpx.AsyncClient(
+            follow_redirects=False, timeout=httpx.Timeout(20, connect=5)
+        ) as client:
             current = url
             for _ in range(3):
                 validate_image_url(current, self.trusted_hosts)

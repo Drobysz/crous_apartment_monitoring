@@ -104,7 +104,9 @@ def _signing_key(settings: Settings) -> bytes:
     return settings.admin_session_secret.get_secret_value().encode("utf-8")
 
 
-def issue_access_token(admin: Admin, session_id: int, settings: Settings, now: datetime | None = None) -> tuple[str, datetime]:
+def issue_access_token(
+    admin: Admin, session_id: int, settings: Settings, now: datetime | None = None
+) -> tuple[str, datetime]:
     now = now or datetime.now(UTC)
     expires_at = now + timedelta(minutes=settings.admin_access_token_minutes)
     header = _base64url(b'{"alg":"HS256","typ":"JWT"}')
@@ -124,11 +126,17 @@ def issue_access_token(admin: Admin, session_id: int, settings: Settings, now: d
             separators=(",", ":"),
         ).encode("utf-8")
     )
-    signature = _base64url(hmac.new(_signing_key(settings), f"{header}.{payload}".encode("ascii"), hashlib.sha256).digest())
+    signature = _base64url(
+        hmac.new(
+            _signing_key(settings), f"{header}.{payload}".encode("ascii"), hashlib.sha256
+        ).digest()
+    )
     return f"{header}.{payload}.{signature}", expires_at
 
 
-def decode_access_token(token: str, settings: Settings, now: datetime | None = None) -> dict[str, Any]:
+def decode_access_token(
+    token: str, settings: Settings, now: datetime | None = None
+) -> dict[str, Any]:
     now = now or datetime.now(UTC)
     try:
         header, payload, signature = token.split(".")
@@ -136,8 +144,15 @@ def decode_access_token(token: str, settings: Settings, now: datetime | None = N
         claims = json.loads(_decode_base64url(payload))
     except (ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
         raise AuthenticationError("Invalid access token") from error
-    expected = _base64url(hmac.new(_signing_key(settings), f"{header}.{payload}".encode("ascii"), hashlib.sha256).digest())
-    if not hmac.compare_digest(signature, expected) or header_json != {"alg": "HS256", "typ": "JWT"}:
+    expected = _base64url(
+        hmac.new(
+            _signing_key(settings), f"{header}.{payload}".encode("ascii"), hashlib.sha256
+        ).digest()
+    )
+    if not hmac.compare_digest(signature, expected) or header_json != {
+        "alg": "HS256",
+        "typ": "JWT",
+    }:
         raise AuthenticationError("Invalid access token")
     if claims.get("iss") != "crous-admin" or claims.get("aud") != "crous-admin-panel":
         raise AuthenticationError("Invalid access token")
@@ -148,7 +163,9 @@ def decode_access_token(token: str, settings: Settings, now: datetime | None = N
     return claims
 
 
-async def create_session(session: AsyncSession, admin: Admin, settings: Settings, now: datetime | None = None) -> SessionTokens:
+async def create_session(
+    session: AsyncSession, admin: Admin, settings: Settings, now: datetime | None = None
+) -> SessionTokens:
     now = now or datetime.now(UTC)
     refresh_token = secrets.token_urlsafe(48)
     csrf_token = secrets.token_urlsafe(32)
@@ -163,10 +180,14 @@ async def create_session(session: AsyncSession, admin: Admin, settings: Settings
     session.add(admin_session)
     await session.flush()
     access_token, access_expires_at = issue_access_token(admin, admin_session.id, settings, now)
-    return SessionTokens(access_token, refresh_token, csrf_token, access_expires_at, refresh_expires_at)
+    return SessionTokens(
+        access_token, refresh_token, csrf_token, access_expires_at, refresh_expires_at
+    )
 
 
-async def rotate_session(session: AsyncSession, refresh_token: str, settings: Settings, now: datetime | None = None) -> tuple[Admin, SessionTokens]:
+async def rotate_session(
+    session: AsyncSession, refresh_token: str, settings: Settings, now: datetime | None = None
+) -> tuple[Admin, SessionTokens]:
     now = now or datetime.now(UTC)
     previous = await session.scalar(
         select(AdminSession).where(
@@ -187,7 +208,9 @@ async def rotate_session(session: AsyncSession, refresh_token: str, settings: Se
     return admin, tokens
 
 
-async def resolve_principal(session: AsyncSession, token: str, settings: Settings) -> AdminPrincipal:
+async def resolve_principal(
+    session: AsyncSession, token: str, settings: Settings
+) -> AdminPrincipal:
     claims = decode_access_token(token, settings)
     try:
         admin_id = int(claims["sub"])
@@ -209,14 +232,20 @@ async def resolve_principal(session: AsyncSession, token: str, settings: Setting
     return AdminPrincipal(admin.id, admin.username, admin.role, admin_session.id)
 
 
-async def csrf_is_valid(session: AsyncSession, principal: AdminPrincipal, csrf_token: str | None) -> bool:
+async def csrf_is_valid(
+    session: AsyncSession, principal: AdminPrincipal, csrf_token: str | None
+) -> bool:
     if not csrf_token:
         return False
     admin_session = await session.get(AdminSession, principal.session_id)
-    return bool(admin_session and hmac.compare_digest(admin_session.csrf_token_hash, hash_token(csrf_token)))
+    return bool(
+        admin_session and hmac.compare_digest(admin_session.csrf_token_hash, hash_token(csrf_token))
+    )
 
 
-async def refresh_csrf_is_valid(session: AsyncSession, refresh_token: str, csrf_token: str | None) -> bool:
+async def refresh_csrf_is_valid(
+    session: AsyncSession, refresh_token: str, csrf_token: str | None
+) -> bool:
     if not csrf_token:
         return False
     admin_session = await session.scalar(
@@ -225,4 +254,6 @@ async def refresh_csrf_is_valid(session: AsyncSession, refresh_token: str, csrf_
             AdminSession.revoked_at.is_(None),
         )
     )
-    return bool(admin_session and hmac.compare_digest(admin_session.csrf_token_hash, hash_token(csrf_token)))
+    return bool(
+        admin_session and hmac.compare_digest(admin_session.csrf_token_hash, hash_token(csrf_token))
+    )

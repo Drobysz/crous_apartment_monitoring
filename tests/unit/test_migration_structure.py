@@ -55,7 +55,9 @@ def test_active_migration_graph_is_linear_and_uses_short_identifiers() -> None:
 
     assert revisions, "no active Alembic revisions found"
     parents = [parent for parent in revisions.values() if parent is not None]
-    assert all(parent in revisions for parent in parents), "a down_revision is missing from the active graph"
+    assert all(parent in revisions for parent in parents), (
+        "a down_revision is missing from the active graph"
+    )
     assert len([revision for revision, parent in revisions.items() if parent is None]) == 1
     assert all(count == 1 for count in Counter(parents).values()), "migration graph has a branch"
 
@@ -94,7 +96,10 @@ def test_active_revisions_are_historical_snapshots() -> None:
                 )
                 if call_name in {"sa.Column", "sqlalchemy.Column"} and node.args:
                     column_name = node.args[0]
-                    if isinstance(column_name, ast.Constant) and column_name.value == "last_changed_at":
+                    if (
+                        isinstance(column_name, ast.Constant)
+                        and column_name.value == "last_changed_at"
+                    ):
                         last_changed_at_definitions += 1
 
     assert last_changed_at_definitions == 1, "searches.last_changed_at must be created exactly once"

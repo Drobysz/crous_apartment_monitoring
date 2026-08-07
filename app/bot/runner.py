@@ -15,7 +15,8 @@ from app.geocoding.provider import PhotonProvider
 
 async def main() -> None:
     settings = get_settings()
-    if not settings.telegram_bot_token: raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
+    if not settings.telegram_bot_token:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN is required")
     configure_logging(settings.log_level)
     bot = Bot(
         settings.telegram_bot_token.get_secret_value(),
@@ -27,4 +28,5 @@ async def main() -> None:
     await dispatcher.start_polling(bot)
 
 
-if __name__ == "__main__": asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())

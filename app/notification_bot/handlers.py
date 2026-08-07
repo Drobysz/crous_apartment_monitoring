@@ -30,6 +30,10 @@ def build_router(session_factory: async_sessionmaker[AsyncSession]) -> Router:
             )
             if allowed:
                 await session.commit()
-        await message.answer(i18n.text("ru", "notification-bot-ready" if allowed else "notification-bot-access-denied"))
+        await message.answer(
+            i18n.text(
+                "ru", "notification-bot-ready" if allowed else "notification-bot-access-denied"
+            )
+        )
 
     return router

@@ -17,7 +17,10 @@ dispatcher.include_router(build_router(SessionLocal))
 
 async def configure_webhook(notification_bot: Bot, configured_settings: Settings) -> None:
     """Register the public notification-bot webhook during a webhook deployment."""
-    if configured_settings.run_mode != "webhook" or configured_settings.notification_webhook_secret is None:
+    if (
+        configured_settings.run_mode != "webhook"
+        or configured_settings.notification_webhook_secret is None
+    ):
         return
     webhook_url = f"{str(configured_settings.public_base_url).rstrip('/')}{configured_settings.notification_bot_webhook_path}"
     await notification_bot.set_webhook(
@@ -46,7 +49,9 @@ async def healthz() -> dict[str, str]:
 
 
 @app.post("/webhook")
-async def webhook(update: dict[str, object], x_telegram_bot_api_secret_token: str | None = Header(default=None)) -> dict[str, bool]:
+async def webhook(
+    update: dict[str, object], x_telegram_bot_api_secret_token: str | None = Header(default=None)
+) -> dict[str, bool]:
     if bot is None or settings.notification_webhook_secret is None:
         raise HTTPException(status_code=503, detail="Notification bot webhook is not configured")
     if x_telegram_bot_api_secret_token != settings.notification_webhook_secret.get_secret_value():

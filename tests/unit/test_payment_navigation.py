@@ -8,8 +8,16 @@ from app.payments.stripe import ProcessedPayment
 
 
 @pytest.mark.asyncio
-async def test_payment_confirmation_refreshes_the_visible_main_screen(monkeypatch: pytest.MonkeyPatch) -> None:
-    user = User(id=17, telegram_user_id=700, telegram_chat_id=701, language="ru", active_navigation_screen="main")
+async def test_payment_confirmation_refreshes_the_visible_main_screen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = User(
+        id=17,
+        telegram_user_id=700,
+        telegram_chat_id=701,
+        language="ru",
+        active_navigation_screen="main",
+    )
     plan = SubscriptionPlan(id=4, code="season", name="Season", price_cents=1000)
     payment = ProcessedPayment(user, plan)
     sent: list[tuple[object, ...]] = []
@@ -57,8 +65,16 @@ async def test_payment_confirmation_refreshes_the_visible_main_screen(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_duplicate_payment_refreshes_the_main_screen_without_resending_notice(monkeypatch: pytest.MonkeyPatch) -> None:
-    user = User(id=18, telegram_user_id=800, telegram_chat_id=801, language="en", active_navigation_screen="payment")
+async def test_duplicate_payment_refreshes_the_main_screen_without_resending_notice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = User(
+        id=18,
+        telegram_user_id=800,
+        telegram_chat_id=801,
+        language="en",
+        active_navigation_screen="payment",
+    )
     plan = SubscriptionPlan(id=5, code="season", name="Season", price_cents=1000)
     payment = ProcessedPayment(user, plan, duplicate=True)
     rendered: list[tuple[object, ...]] = []
@@ -90,7 +106,9 @@ async def test_duplicate_payment_refreshes_the_main_screen_without_resending_not
     monkeypatch.setattr(
         application,
         "send_operational_notification",
-        lambda *_: (_ for _ in ()).throw(AssertionError("duplicate payments must not resend operational notice")),
+        lambda *_: (_ for _ in ()).throw(
+            AssertionError("duplicate payments must not resend operational notice")
+        ),
     )
 
     await application.notify_payment_confirmation(payment)

@@ -17,7 +17,8 @@ def test_radius_is_converted_to_valid_crous_ordered_bounds() -> None:
 
 
 def test_invalid_bounds_are_rejected() -> None:
-    with pytest.raises(ValueError): validate_bounds(Bounds(2, 40, 1, 41))
+    with pytest.raises(ValueError):
+        validate_bounds(Bounds(2, 40, 1, 41))
 
 
 @pytest.mark.parametrize(

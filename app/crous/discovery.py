@@ -21,7 +21,11 @@ async def discover_tools(client: httpx.AsyncClient, base_url: str) -> list[Tool]
     response.raise_for_status()
     data = response.json().get("tools", {})
     tools = [
-        Tool(id=int(value["id"]), management_year=int(value["managementYear"]), mechanism=value["mechanism"])
+        Tool(
+            id=int(value["id"]),
+            management_year=int(value["managementYear"]),
+            mechanism=value["mechanism"],
+        )
         for value in data.values()
         if value.get("isEnabled") and value.get("id") is not None
     ]
@@ -39,7 +43,9 @@ async def discover_current_tool(client: httpx.AsyncClient, base_url: str) -> Too
     """
 
     public_tools = [
-        tool for tool in await discover_tools(client, base_url) if tool.mechanism in PUBLIC_SEARCH_MECHANISMS
+        tool
+        for tool in await discover_tools(client, base_url)
+        if tool.mechanism in PUBLIC_SEARCH_MECHANISMS
     ]
     if not public_tools:
         raise CrousParseError("CROUS context did not contain an enabled public search tool")

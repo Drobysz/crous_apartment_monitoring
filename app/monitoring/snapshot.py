@@ -17,7 +17,9 @@ def _text(value: object) -> str | None:
 def _url(value: str) -> str:
     parsed = urlsplit(value)
     # CROUS listing identity does not depend on analytics query parameters.
-    return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), "", ""))
+    return urlunsplit(
+        (parsed.scheme.lower(), parsed.netloc.lower(), parsed.path.rstrip("/"), "", "")
+    )
 
 
 def listing_identity(item: CrousListing) -> str:
@@ -47,7 +49,9 @@ def canonical_snapshot(items: list[CrousListing]) -> tuple[list[CrousListing], s
     for item in items:
         identity = listing_identity(item)
         previous = unique.get(identity)
-        if previous is None or json.dumps(material_listing(item), sort_keys=True, ensure_ascii=False) < json.dumps(material_listing(previous), sort_keys=True, ensure_ascii=False):
+        if previous is None or json.dumps(
+            material_listing(item), sort_keys=True, ensure_ascii=False
+        ) < json.dumps(material_listing(previous), sort_keys=True, ensure_ascii=False):
             unique[identity] = item
     ordered = [unique[key] for key in sorted(unique)]
     payload = [material_listing(item) for item in ordered]

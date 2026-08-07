@@ -15,7 +15,9 @@ class SearchLock:
         self.acquired = False
 
     async def __aenter__(self) -> bool:
-        self.acquired = bool(await self.redis.set(self.key, self.token, nx=True, ex=self.ttl_seconds))
+        self.acquired = bool(
+            await self.redis.set(self.key, self.token, nx=True, ex=self.ttl_seconds)
+        )
         return self.acquired
 
     async def __aexit__(self, *_: object) -> None:

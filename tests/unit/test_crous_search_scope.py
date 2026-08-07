@@ -138,11 +138,20 @@ async def test_search_does_not_stop_on_an_unavailable_page_before_later_results(
         items = (
             [{"id": 1, "label": "Unavailable", "available": False}]
             if page == 1
-            else [{"id": 2, "label": "Available", "residence": {"location": {"lat": 48.69, "lon": 6.18}}}]
+            else [
+                {
+                    "id": 2,
+                    "label": "Available",
+                    "residence": {"location": {"lat": 48.69, "lon": 6.18}},
+                }
+            ]
         )
         return httpx.Response(200, json={"results": {"total": {"value": 2}, "items": items}})
 
-    client = CrousClient(Settings(crous_base_url="https://example.test"), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    client = CrousClient(
+        Settings(crous_base_url="https://example.test"),
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
     client._tool = Tool(id=47, management_year=2026, mechanism="test")
     try:
         listings = await client.search(Bounds(6.13, 48.72, 6.22, 48.65), page_size=1)
@@ -156,10 +165,23 @@ async def test_search_does_not_stop_on_an_unavailable_page_before_later_results(
 async def test_declared_but_missing_page_is_not_mistaken_for_a_smaller_snapshot() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         page = json.loads(request.content)["page"]
-        items = [{"id": 1, "label": "Available", "residence": {"location": {"lat": 48.69, "lon": 6.18}}}] if page == 1 else []
+        items = (
+            [
+                {
+                    "id": 1,
+                    "label": "Available",
+                    "residence": {"location": {"lat": 48.69, "lon": 6.18}},
+                }
+            ]
+            if page == 1
+            else []
+        )
         return httpx.Response(200, json={"results": {"total": {"value": 2}, "items": items}})
 
-    client = CrousClient(Settings(crous_base_url="https://example.test"), httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    client = CrousClient(
+        Settings(crous_base_url="https://example.test"),
+        httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
     client._tool = Tool(id=47, management_year=2026, mechanism="test")
     try:
         with pytest.raises(CrousUnavailable, match="declared results"):

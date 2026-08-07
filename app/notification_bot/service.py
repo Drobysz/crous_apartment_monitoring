@@ -37,10 +37,16 @@ async def register_admin_notification_chat(
     key = username_key(telegram_username)
     if key is None:
         return False
-    admin = await session.scalar(select(Admin).where(Admin.username_key == key, Admin.is_active.is_(True)))
+    admin = await session.scalar(
+        select(Admin).where(Admin.username_key == key, Admin.is_active.is_(True))
+    )
     if admin is None:
         return False
-    chat = await session.scalar(select(AdminNotificationChat).where(AdminNotificationChat.telegram_chat_id == telegram_chat_id))
+    chat = await session.scalar(
+        select(AdminNotificationChat).where(
+            AdminNotificationChat.telegram_chat_id == telegram_chat_id
+        )
+    )
     if chat is None:
         chat = AdminNotificationChat(
             admin_id=admin.id,
