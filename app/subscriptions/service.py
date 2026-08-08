@@ -266,17 +266,39 @@ async def activate_subscription(
 async def activate_trial(
     session: AsyncSession, user: User, now: datetime | None = None
 ) -> UserSubscription | None:
-    # Trial is represented by a zero-price internal plan only when it is first used.
-    if user.trial_used_at is not None:
+    # Lock the user row so two callback requests cannot both observe an unused
+    # trial before either request commits its marker.
+    locked_user = await session.scalar(select(User).where(User.id == user.id).with_for_update())
+    if locked_user is None:
         return None
+    if locked_user.trial_used_at is not None:
+        return None
+
+    # Older trial rows may predate the persistent marker. Treat the auditable
+    # entitlement itself as proof of use and repair the marker before refusing
+    # the request.
+    previous_trial = await session.scalar(
+        select(UserSubscription)
+        .where(
+            UserSubscription.user_id == locked_user.id,
+            UserSubscription.activation_source == TRIAL,
+        )
+        .order_by(UserSubscription.starts_at)
+    )
+    if previous_trial is not None:
+        locked_user.trial_used_at = previous_trial.starts_at
+        await session.flush()
+        return None
+
     now = now or datetime.now(UTC)
     plan = await session.scalar(select(SubscriptionPlan).where(SubscriptionPlan.code == TRIAL))
     if plan is None:
         plan = SubscriptionPlan(code=TRIAL, name="Trial", price_cents=0, is_active=False)
         session.add(plan)
         await session.flush()
-    entitlement = await activate_subscription(session, user, plan, source="trial", now=now)
-    user.trial_used_at = now
+
+    entitlement = await activate_subscription(session, locked_user, plan, source=TRIAL, now=now)
+    locked_user.trial_used_at = now
     return entitlement
 
 

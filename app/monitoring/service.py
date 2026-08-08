@@ -35,6 +35,26 @@ class SnapshotDeliveryError(RuntimeError):
     pass
 
 
+async def get_active_searches(
+    session: AsyncSession,
+) -> list[tuple[Search, User]]:
+    """Return only the persisted, user-scoped monitoring anchors.
+
+    A worker may share the fetch infrastructure, but each search remains an
+    independent delivery unit. Keeping this query in the monitoring service
+    prevents callers from accidentally using process-wide monitoring state.
+    """
+    return list(
+        (
+            await session.execute(
+                select(Search, User)
+                .join(User, User.id == Search.user_id)
+                .where(Search.is_active.is_(True), User.is_blocked.is_(False))
+            )
+        ).all()
+    )
+
+
 async def _active_group(session: AsyncSession, search_id: int) -> SearchDisplayGroup | None:
     return await session.scalar(
         select(SearchDisplayGroup)

@@ -145,7 +145,7 @@ def test_season_purchase_after_end_targets_next_year() -> None:
 
 
 @pytest.mark.asyncio
-async def test_trial_is_available_once_and_falls_back_to_free() -> None:
+async def test_trial_is_available_once_for_exactly_twelve_hours_and_survives_restart() -> None:
     engine = create_async_engine("sqlite+aiosqlite://")
     factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     async with engine.begin() as connection:
@@ -154,16 +154,32 @@ async def test_trial_is_available_once_and_falls_back_to_free() -> None:
         user = User(telegram_user_id=10, telegram_chat_id=10, language="en")
         session.add(user)
         await session.flush()
-        first = await activate_trial(session, user, datetime(2026, 7, 10, tzinfo=UTC))
+        started = datetime(2026, 7, 10, 23, 30, tzinfo=UTC)
+        first = await activate_trial(session, user, started)
         assert first is not None
+        assert first.starts_at == started
+        assert first.ends_at == datetime(2026, 7, 11, 11, 30, tzinfo=UTC)
         assert await activate_trial(session, user) is None
         assert (
-            await get_effective_subscription(session, user, datetime(2026, 7, 10, 1, tzinfo=UTC))
+            await get_effective_subscription(
+                session, user, datetime(2026, 7, 11, 11, 29, 59, tzinfo=UTC)
+            )
         ).plan.code == "trial"
         assert (
-            await get_effective_subscription(session, user, datetime(2026, 7, 11, tzinfo=UTC))
+            await get_effective_subscription(
+                session, user, datetime(2026, 7, 11, 11, 30, tzinfo=UTC)
+            )
         ).plan.code == "free"
         assert await plan_by_code(session, "season") is not None
+        await session.commit()
+        user_id = user.id
+    async with factory() as session:
+        restarted_user = await session.get(User, user_id)
+        assert restarted_user is not None
+        assert restarted_user.trial_used_at == started.replace(tzinfo=None)
+        assert (
+            await activate_trial(session, restarted_user, datetime(2026, 7, 12, tzinfo=UTC)) is None
+        )
     await engine.dispose()
 
 

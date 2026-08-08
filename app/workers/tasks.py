@@ -21,7 +21,7 @@ from app.crous.client import CrousClient
 from app.db.models import Listing, Search, SearchListing, UnsubscribedDigestDelivery, User
 from app.db.session import SessionLocal
 from app.monitoring.locks import SearchLock
-from app.monitoring.service import synchronize_search
+from app.monitoring.service import get_active_searches, synchronize_search
 from app.restaurants.client import CrousRestaurantClient
 from app.restaurants.renderer import menu_text
 from app.restaurants.service import due_deliveries, record_daily_statistic, start_delivery
@@ -70,13 +70,7 @@ async def enqueue_active_searches(ctx: dict[str, object]) -> None:
                         entitlement.expiration_notified_at = now
             finally:
                 await notice_bot.session.close()
-        searches = (
-            await session.execute(
-                select(Search, User)
-                .join(User, User.id == Search.user_id)
-                .where(Search.is_active, User.is_blocked.is_(False))
-            )
-        ).all()
+        searches = await get_active_searches(session)
         selected: list[tuple[int, int]] = []
         for search, user in searches:
             interval = await get_monitoring_interval(session, user)
@@ -179,13 +173,7 @@ async def send_housing_statistics(_: dict[str, object], day: str) -> None:
     )
     try:
         async with SessionLocal() as session:
-            rows = (
-                await session.execute(
-                    select(Search, User)
-                    .join(User, User.id == Search.user_id)
-                    .where(Search.is_active, User.is_blocked.is_(False))
-                )
-            ).all()
+            rows = await get_active_searches(session)
             for search, user in rows:
                 cheapest, highest, count = (
                     await session.execute(
