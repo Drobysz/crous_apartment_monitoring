@@ -188,8 +188,6 @@ unsubscribed-digest = 🚨 هنوز دنبال مسکن CROUS هستید؟ ام�
 مکان‌های جدید به‌ویژه در این مناطق ظاهر شدند: {top_departments}
 referral-owner-not-found = هیچ حساب ارجاعی به حساب تلگرام شما مرتبط نیست.
 referral-owner-unavailable = آمار ارجاع هنوز پیکربندی نشده است.
-referral-owner-dashboard-link = داشبورد ارجاع شما:
-
-{url}
+referral-owner-dashboard-link = آمار ارجاع شما
 
 این پیوند {minutes} دقیقه معتبر است.

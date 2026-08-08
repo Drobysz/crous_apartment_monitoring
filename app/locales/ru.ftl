@@ -188,8 +188,6 @@ unsubscribed-digest = 🚨 Вы всё ещё ищете жильё CROUS? Се�
 Новые места появились, в частности, в: {top_departments}
 referral-owner-not-found = С вашим аккаунтом Telegram не связан реферальный аккаунт.
 referral-owner-unavailable = Статистика рефералов ещё не настроена.
-referral-owner-dashboard-link = Ваш реферальный кабинет:
-
-{url}
+referral-owner-dashboard-link = Ваша статистика по рефералам
 
 Ссылка действительна {minutes} минут.

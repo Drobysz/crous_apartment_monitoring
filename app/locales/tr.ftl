@@ -188,8 +188,6 @@ unsubscribed-digest = 🚨 Hâlâ CROUS konutu mu arıyorsunuz? Bugün {total_to
 Yeni yerler özellikle şuralarda göründü: {top_departments}
 referral-owner-not-found = Telegram hesabınızla ilişkilendirilmiş bir yönlendirme hesabı yok.
 referral-owner-unavailable = Yönlendirme istatistikleri henüz yapılandırılmadı.
-referral-owner-dashboard-link = Yönlendirme kontrol paneliniz:
-
-{url}
+referral-owner-dashboard-link = Yönlendirme istatistikleriniz
 
 Bu bağlantı {minutes} dakika geçerlidir.

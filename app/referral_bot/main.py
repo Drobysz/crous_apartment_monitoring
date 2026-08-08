@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+from html import escape
 from urllib.parse import urlencode
 
 from aiogram import Bot, Dispatcher, Router
+from aiogram.enums import ParseMode
 from aiogram.filters import Command
 from aiogram.types import Message
 from sqlalchemy import select
@@ -14,6 +16,17 @@ from app.core.i18n import detect_language, i18n
 from app.db.models import ReferralProgram
 from app.db.session import SessionLocal
 from app.referrals.service import bind_owner, issue_owner_login_token
+
+
+def dashboard_url(base_url: str, token: str) -> str:
+    return f"{base_url.rstrip('/')}/referral/dashboard?{urlencode({'token': token})}"
+
+
+def dashboard_link(language: str, url: str) -> str:
+    return (
+        f'<a href="{escape(url, quote=True)}">'
+        f"{escape(i18n.text(language, 'referral-owner-dashboard-link'))}</a>"
+    )
 
 
 def build_router() -> Router:
@@ -58,14 +71,10 @@ def build_router() -> Router:
                 session, program, settings.referral_login_token_ttl_minutes
             )
             await session.commit()
-        url = f"{str(settings.referral_stats_base_url).rstrip('/')}/referral/dashboard?{urlencode({'token': token})}"
+        url = dashboard_url(str(settings.referral_stats_base_url), token)
         await message.answer(
-            i18n.text(
-                language,
-                "referral-owner-dashboard-link",
-                url=url,
-                minutes=settings.referral_login_token_ttl_minutes,
-            )
+            dashboard_link(language, url),
+            parse_mode=ParseMode.HTML,
         )
 
     return router

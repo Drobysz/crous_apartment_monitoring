@@ -26,6 +26,18 @@ const preferenceMessages = {
 
 for (const [locale, copy] of Object.entries(preferenceMessages)) Object.assign(messages[locale], copy);
 
+const referralOwnerMessages = {
+  en: { referralDashboard: "Referral dashboard", referralLinkExpired: "This secure link is invalid or has expired. Open a new link from the referral bot." },
+  fr: { referralDashboard: "Tableau de bord de parrainage", referralLinkExpired: "Ce lien sécurisé est invalide ou a expiré. Ouvrez un nouveau lien depuis le bot de parrainage." },
+  ru: { referralDashboard: "Реферальная статистика", referralLinkExpired: "Эта защищённая ссылка недействительна или истекла. Откройте новую ссылку в реферальном боте." },
+  uk: { referralDashboard: "Статистика рефералів", referralLinkExpired: "Це захищене посилання недійсне або прострочене. Відкрийте нове посилання в реферальному боті." },
+  tr: { referralDashboard: "Yönlendirme istatistikleri", referralLinkExpired: "Bu güvenli bağlantı geçersiz veya süresi dolmuş. Yönlendirme botundan yeni bir bağlantı açın." },
+  fa: { referralDashboard: "آمار ارجاع", referralLinkExpired: "این پیوند امن نامعتبر یا منقضی شده است. یک پیوند جدید را از ربات ارجاع باز کنید." },
+  ar: { referralDashboard: "إحصاءات الإحالة", referralLinkExpired: "هذا الرابط الآمن غير صالح أو منتهي الصلاحية. افتح رابطًا جديدًا من بوت الإحالة." }
+};
+
+for (const [locale, copy] of Object.entries(referralOwnerMessages)) Object.assign(messages[locale], copy);
+
 Object.assign(messages.en, {
   reports: "Reports", report: "Report", submitted: "Submitted", preview: "Preview",
   user: "User", platform: "Platform", fullReport: "Full report",

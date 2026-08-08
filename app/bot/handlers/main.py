@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import date
 from html import escape
+from typing import Any
 
 import httpx
 import structlog
@@ -94,6 +95,19 @@ from app.subscriptions.service import (
 )
 
 logger = structlog.get_logger(__name__)
+
+
+def restaurant_result_by_code(rows: object, restaurant_code: int) -> dict[str, Any] | None:
+    if not isinstance(rows, list):
+        return None
+    return next(
+        (
+            value
+            for value in rows
+            if isinstance(value, dict) and value.get("code") == restaurant_code
+        ),
+        None,
+    )
 
 
 def build_router(
@@ -544,18 +558,25 @@ def build_router(
 
     async def render_restaurant(bot: Bot, session: AsyncSession, user: User) -> None:
         subscription = await get_restaurant_subscription(session, user)
+        saved = await favorites(session, user)
         primary = (
             await session.get(FavoriteRestaurant, subscription.primary_restaurant_id)
             if subscription.primary_restaurant_id
             else None
         )
         value = primary.name if primary else i18n.text(user.language, "restaurant-primary-none")
+        saved_names = "\n".join(f"• {favorite.name}" for favorite in saved)
+        content = i18n.text(user.language, "restaurant-primary", value=value)
+        if saved_names:
+            content = (
+                f"{content}\n\n{i18n.text(user.language, 'restaurant-favorites')}:\n{saved_names}"
+            )
         version = user.active_navigation_version + 1
         await nav.render_text_screen(
             bot,
             session,
             user,
-            i18n.text(user.language, "restaurant-primary", value=value),
+            content,
             restaurant_menu(user.language, version),
             "restaurant",
         )
@@ -852,12 +873,11 @@ def build_router(
                 )
             elif action == "restaurant-save-result":
                 rows = (await state.get_data()).get("restaurant_results", [])
-                if callback_data.entity < len(rows) and isinstance(
-                    rows[callback_data.entity], dict
-                ):
+                row = restaurant_result_by_code(rows, callback_data.entity)
+                if row is not None:
                     try:
-                        await save_favorite(
-                            session, user, restaurant_from_api(rows[callback_data.entity])
+                        saved_favorite = await save_favorite(
+                            session, user, restaurant_from_api(row)
                         )
                     except RestaurantDuplicateError:
                         await callback.message.answer(
@@ -866,16 +886,23 @@ def build_router(
                     except RestaurantLimitError:
                         await callback.message.answer(i18n.text(user.language, "restaurant-limit"))
                     else:
+                        subscription = await get_restaurant_subscription(session, user)
+                        if subscription.primary_restaurant_id is None:
+                            await set_primary(session, user, saved_favorite.id)
                         await callback.message.answer(i18n.text(user.language, "restaurant-saved"))
+                else:
+                    await callback.message.answer(
+                        i18n.text(user.language, "restaurant-menu-unavailable")
+                    )
                 await render_restaurant(callback.bot, session, user)
             elif action == "restaurant-info" or action == "restaurant-menu":
                 subscription = await get_restaurant_subscription(session, user)
-                favorite = (
+                primary_favorite = (
                     await session.get(FavoriteRestaurant, subscription.primary_restaurant_id)
                     if subscription.primary_restaurant_id
                     else None
                 )
-                if favorite is None:
+                if primary_favorite is None:
                     await callback.message.answer(
                         i18n.text(user.language, "restaurant-primary-none")
                     )
@@ -887,7 +914,7 @@ def build_router(
                                 (
                                     item
                                     for item in await client.restaurants()
-                                    if item.code == favorite.restaurant_code
+                                    if item.code == primary_favorite.restaurant_code
                                 ),
                                 None,
                             )
@@ -956,12 +983,12 @@ def build_router(
                         await client.close()
             elif action == "restaurant-menu-day":
                 subscription = await get_restaurant_subscription(session, user)
-                favorite = (
+                primary_favorite = (
                     await session.get(FavoriteRestaurant, subscription.primary_restaurant_id)
                     if subscription.primary_restaurant_id
                     else None
                 )
-                if favorite:
+                if primary_favorite:
                     client = CrousRestaurantClient()
                     try:
                         for offset in (
@@ -970,7 +997,7 @@ def build_router(
                             await callback.message.answer(
                                 menu_text(
                                     await client.menu(
-                                        favorite.restaurant_code,
+                                        primary_favorite.restaurant_code,
                                         date.fromordinal(date.today().toordinal() + offset),
                                     ),
                                     user.language,
@@ -1064,13 +1091,13 @@ def build_router(
                 )
                 await render_restaurant(callback.bot, session, user)
             elif action == "restaurant-manage":
-                favorite = await session.scalar(
+                managed_favorite = await session.scalar(
                     select(FavoriteRestaurant).where(
                         FavoriteRestaurant.id == callback_data.entity,
                         FavoriteRestaurant.user_id == user.id,
                     )
                 )
-                if favorite:
+                if managed_favorite:
                     version = user.active_navigation_version + 1
                     keyboard = InlineKeyboardMarkup(
                         inline_keyboard=[
@@ -1079,7 +1106,7 @@ def build_router(
                                     text=i18n.text(user.language, "restaurant-set-primary"),
                                     callback_data=NavCallback(
                                         action="restaurant-set-primary",
-                                        entity=favorite.id,
+                                        entity=managed_favorite.id,
                                         version=version,
                                     ).pack(),
                                 )
@@ -1089,7 +1116,7 @@ def build_router(
                                     text=i18n.text(user.language, "restaurant-remove"),
                                     callback_data=NavCallback(
                                         action="restaurant-remove",
-                                        entity=favorite.id,
+                                        entity=managed_favorite.id,
                                         version=version,
                                     ).pack(),
                                 )
@@ -1097,7 +1124,12 @@ def build_router(
                         ]
                     )
                     await nav.render_text_screen(
-                        callback.bot, session, user, favorite.name, keyboard, "restaurant-favorite"
+                        callback.bot,
+                        session,
+                        user,
+                        managed_favorite.name,
+                        keyboard,
+                        "restaurant-favorite",
                     )
             elif action == "restaurant-set-primary":
                 await set_primary(session, user, callback_data.entity)
@@ -1653,11 +1685,13 @@ def build_router(
                     InlineKeyboardButton(
                         text=str(row.get("nom") or row.get("code")),
                         callback_data=NavCallback(
-                            action="restaurant-save-result", entity=index, version=version
+                            action="restaurant-save-result",
+                            entity=int(row["code"]),
+                            version=version,
                         ).pack(),
                     )
                 ]
-                for index, row in enumerate(data[:20])
+                for row in data[:20]
             ]
             + [
                 [

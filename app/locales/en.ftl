@@ -62,9 +62,7 @@ referral-owner-not-found = No referral account is associated with your Telegram 
 
 Please contact support if you believe this is a mistake.
 referral-owner-unavailable = Referral statistics are not configured yet.
-referral-owner-dashboard-link = Your referral dashboard:
-
-{url}
+referral-owner-dashboard-link = Your referral statistics
 
 This link is valid for {minutes} minutes.
 list-loading = Loading current apartments…
